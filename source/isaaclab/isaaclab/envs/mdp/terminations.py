@@ -159,3 +159,23 @@ def illegal_contact(env: ManagerBasedRLEnv, threshold: float, sensor_cfg: SceneE
     return torch.any(
         torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0] > threshold, dim=1
     )
+
+
+"""
+Custom terminations.
+"""
+import math
+
+def all_feet_over_air(env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Termination when the asset's feet are all not in contact with the ground."""
+    # extract the used quantities
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    return torch.all(air_time > 1.0, dim=1)
+
+
+def illegal_body_slant(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Termination when the asset's body slants beyond a certain threshold."""
+    # extract the used quantities
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.sum(asset.data.projected_gravity_b * asset.data.GRAVITY_VEC_W, dim=1) < math.cos(math.pi / 3)

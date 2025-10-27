@@ -222,6 +222,15 @@ class RslRlBaseRunnerCfg:
 
     If regex expression, the latest (alphabetical order) matching file will be loaded.
     """
+    
+    video: bool = False
+    """Whether to record videos during training. Default is False."""
+    
+    video_interval: int = 200
+    """The number of iterations between video recordings. Default is 100."""
+    
+    video_length: int = 5
+    """The length of each recorded video in seconds. Default is 5."""
 
 
 @configclass
