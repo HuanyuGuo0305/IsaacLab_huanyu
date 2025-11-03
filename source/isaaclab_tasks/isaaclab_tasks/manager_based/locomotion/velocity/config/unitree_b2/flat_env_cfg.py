@@ -1,4 +1,5 @@
 from isaaclab.utils import configclass
+from isaaclab.managers import SceneEntityCfg
 
 from .rough_env_cfg import UnitreeB2RoughEnvCfg
 
@@ -8,21 +9,36 @@ class UnitreeB2FlatEnvCfg(UnitreeB2RoughEnvCfg):
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
+
+        # no height scan
+        self.scene.height_scanner = None
+        self.scene.height_scanner_base = None
+        self.observations.policy.height_scan = None
+        self.observations.critic.height_scan = None
         
         # ----- override rewards -----
-        # --override rewards
-        self.rewards.track_lin_vel_xy_exp.weight = 1.5
-        self.rewards.track_ang_vel_z_exp.weight = 1.5
-        # --penalties
-        self.rewards.lin_vel_z_l2.weight = -2.0
-        self.rewards.dof_torques_l2.weight = -5.0e-06
-        self.rewards.feet_air_time.weight = 2.0
-        self.rewards.dof_acc_l2.weight = -1.0e-06
-        self.rewards.action_rate_l2.weight = -0.05
-        self.rewards.undesired_contacts.weight = -1.0
-        # --optional penalties
-        self.rewards.flat_orientation_l2.weight = -5.0
-        
+        self.rewards.base_height_l2.params["sensor_cfg"] = None
+        # -- task
+        self.rewards.track_lin_vel_xy_exp.weight = 3.25
+        self.rewards.track_ang_vel_z_exp.weight = 1.75
+        # -- root penalties
+        self.rewards.lin_vel_z_l2.weight = -1.25
+        self.rewards.ang_vel_xy_l2.weight = -0.1   
+        self.rewards.flat_orientation_l2.weight= -2.75 
+        # -- joint penalties
+        self.rewards.dof_torques_l2.weight = -3e-05
+        self.rewards.dof_acc_l2.weight = -3e-07
+        self.rewards.dof_pos_limits.weight = -3.0
+        # -- action penalties
+        self.rewards.action_rate_l2.weight = -0.075
+        # -- contact sensor
+        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_(hip|thigh)"), "threshold":1.0}
+        self.rewards.undesired_contacts.weight = 0.0
+        # -- others
+        self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*foot"
+        self.rewards.feet_air_time.params["threshold"] = 0.25
+        self.rewards.feet_air_time.weight = 0.0
+
         # ----- terrain settings -----
         # change terrain to flat
         self.scene.terrain.terrain_type = "plane"

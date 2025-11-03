@@ -6,7 +6,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 @configclass
 class UnitreeB2RoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 1500
+    max_iterations = 2500
     save_interval = 50
     experiment_name = "unitree_b2_velocity_rough"
     empirical_normalization = False
@@ -23,12 +23,14 @@ class UnitreeB2RoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.005,
+        entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=1.0e-3,
@@ -45,8 +47,8 @@ class UnitreeB2FlatPPORunnerCfg(UnitreeB2RoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        self.max_iterations = 1000
+        self.max_iterations = 1500
         self.wandb_project = "unitree_b2_velocity_flat"
         self.experiment_name = "unitree_b2_velocity_flat"
-        self.policy.actor_hidden_dims = [256, 128, 128]
-        self.policy.critic_hidden_dims = [256, 128, 128]
+        self.policy.actor_hidden_dims = [512, 256, 128]
+        self.policy.critic_hidden_dims = [512, 256, 128]
