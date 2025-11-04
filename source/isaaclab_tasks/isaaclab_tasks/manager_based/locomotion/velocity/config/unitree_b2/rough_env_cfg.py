@@ -110,12 +110,12 @@ class TerminationCfg():
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_hip"), "threshold":1.0},
     )
-    # bad_orirentation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.05})
-    # all_feet_over_air = DoneTerm(
-    #     func=mdp.all_feet_over_air,
-    #     params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")}
-    # )
-    # illegal_body_slant = DoneTerm(func=mdp.illegal_body_slant)
+    bad_orirentation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.9})
+    all_feet_over_air = DoneTerm(
+        func=mdp.all_feet_over_air,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")}
+    )
+    illegal_body_slant = DoneTerm(func=mdp.illegal_body_slant)
 
 
 @configclass
@@ -279,25 +279,31 @@ class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # ----- reward settings -----
         # -- task
-        self.rewards.track_lin_vel_xy_exp.weight = 3.0
-        self.rewards.track_ang_vel_z_exp.weight = 1.5
+        self.rewards.track_lin_vel_xy_exp.weight = 3.25
+        self.rewards.track_ang_vel_z_exp.weight = 1.75
         # -- root penalties
-        self.rewards.lin_vel_z_l2.weight = -3.0
-        self.rewards.ang_vel_xy_l2.weight = -0.05   
-        self.rewards.flat_orientation_l2.weight= -2.0    
+        self.rewards.lin_vel_z_l2.weight = -1.25
+        self.rewards.ang_vel_xy_l2.weight = -0.1   
+        self.rewards.flat_orientation_l2.weight= -0.0
         # -- joint penalties
-        self.rewards.dof_torques_l2.weight = -1e-05
-        self.rewards.dof_acc_l2.weight = -1e-06
-        self.rewards.dof_pos_limits.weight = -5.0
+        self.rewards.dof_torques_l2.weight = -3e-05
+        self.rewards.dof_acc_l2.weight = -3e-07
+        self.rewards.dof_pos_limits.weight = -3.0
         # -- action penalties
-        self.rewards.action_rate_l2.weight = -0.05
+        self.rewards.action_rate_l2.weight = -0.075
         # -- contact sensor
-        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*(thigh|calf)"), "threshold":1.0}
-        self.rewards.undesired_contacts.weight = -2.0
+        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_(hip|thigh)"), "threshold":1.0}
+        self.rewards.undesired_contacts.weight = 0.0
         # -- others
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*foot"
-        self.rewards.feet_air_time.weight = 1.0
+        self.rewards.feet_air_time.params["threshold"] = 0.25
+        self.rewards.feet_air_time.weight = 3.0
 
+        # ----- termination settings -----
+        self.terminations.base_contact = None
+        self.terminations.hip_contact = None
+        self.terminations.illegal_body_slant = None
+        self.terminations.all_feet_over_air = None
 
 
 @configclass

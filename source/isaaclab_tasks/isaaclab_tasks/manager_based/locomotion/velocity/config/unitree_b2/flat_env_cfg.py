@@ -49,6 +49,11 @@ class UnitreeB2FlatEnvCfg(UnitreeB2RoughEnvCfg):
         # ----- comand settings -----
         self.commands.base_velocity.heading_command = False
 
+        # ----- termination settings -----
+        self.terminations.all_feet_over_air = None
+        self.terminations.bad_orirentation = None
+        self.terminations.illegal_body_slant = None
+
  
 @configclass
 class UnitreeB2FlatEnvCfg_PLAY(UnitreeB2FlatEnvCfg):
