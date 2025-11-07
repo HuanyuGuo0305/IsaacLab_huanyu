@@ -22,6 +22,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ActuatorNetMLPCfg, DCMotorCfg, ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 
 ##
 # Configuration - Actuators.
@@ -181,7 +182,7 @@ UNITREE_GO2_CFG = ArticulationCfg(
 
 UNITREE_B2_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path="downloads/b2.usd",
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/Unitree/B2/usd/b2.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,

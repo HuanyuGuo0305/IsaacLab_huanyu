@@ -6,15 +6,15 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 @configclass
 class UnitreeB2RoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 3000
-    save_interval = 50
+    max_iterations = 2500
+    save_interval = 100
     experiment_name = "unitree_b2_velocity_rough"
     empirical_normalization = False
     resume = False
     # load_run = -1
     # load_checkpoint = -1
     logger = "wandb"
-    wandb_entity = "guohuanyu0305"
+    wandb_entity = "huanyu_crl"
     wandb_project = "unitree_b2_velocity_rough"
     obs_groups = {'policy': ['policy'],
                   'critic': ['critic']}
@@ -47,7 +47,7 @@ class UnitreeB2FlatPPORunnerCfg(UnitreeB2RoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        self.max_iterations = 1500
+        self.max_iterations = 2000
         self.wandb_project = "unitree_b2_velocity_flat"
         self.experiment_name = "unitree_b2_velocity_flat"
         self.policy.actor_hidden_dims = [512, 256, 128]

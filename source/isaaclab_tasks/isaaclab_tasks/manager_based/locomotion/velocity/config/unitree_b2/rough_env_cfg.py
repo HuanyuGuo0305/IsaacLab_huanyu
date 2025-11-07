@@ -31,7 +31,7 @@ class UnitreeB2SceneCfg(MySceneCfg):  # Parent class defines terrain, robot (Non
     )
     # IMU sensor
     imu_sensor = ImuCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/imu_link",
+        prim_path="{ENV_REGEX_NS}/Robot/base_link",
         offset=ImuCfg.OffsetCfg(pos=(0.0, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0)),
         history_length=10,
         debug_vis=False,
@@ -111,15 +111,10 @@ class TerminationCfg():
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_hip"), "threshold":1.0},
     )
     bad_orirentation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.9})
-    all_feet_over_air = DoneTerm(
-        func=mdp.all_feet_over_air,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")}
-    )
-    illegal_body_slant = DoneTerm(func=mdp.illegal_body_slant)
 
 
 @configclass
-class UnitreeB2EventCfg(EventCfg):
+class UnitreeB2EventsCfg(EventCfg):
     """Event terms for the MDP."""
 
     # reset events
@@ -152,7 +147,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
     )
     body_lin_acc_l2 = RewTerm(
         func=mdp.body_lin_acc_l2,
-        weight=-0.005,
+        weight=-0.01,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
     )
 
@@ -166,7 +161,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
         setattr(self, attr_name, rew_term)  # setattr(object, name, value) <-> object.name = value
 
     # -- joint penalties
-    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.00125)
+    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.00025)
     dof_vel_limits = RewTerm(
         func=mdp.joint_vel_limits, 
         weight=0.0, 
@@ -179,7 +174,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
     )
     stand_still = RewTerm(
         func=mdp.stand_still_joint_deviation_l1,
-        weight=-0.05,
+        weight=-0.1,
         params={
             "command_name": "base_velocity",
             "command_threshold": 0.05,
@@ -188,7 +183,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
     )
     joint_pos_penalty = RewTerm(
         func=mdp.joint_pos_penalty,
-        weight=-0.4,
+        weight=-0.2,
         params={
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
@@ -234,14 +229,13 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
 class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
     
     scene: UnitreeB2SceneCfg = UnitreeB2SceneCfg(num_envs=4096, env_spacing=2.5)
-    # commands: for this task, use parent class commands
     observations: UnitreeB2ObservationCfg = UnitreeB2ObservationCfg()
     terminations: TerminationCfg = TerminationCfg()
-    events: UnitreeB2EventCfg = UnitreeB2EventCfg()
+    events: UnitreeB2EventsCfg = UnitreeB2EventsCfg()
     rewards: UnitreeB2RoughRewardsCfg = UnitreeB2RoughRewardsCfg()
     
     # Viewer
-    viewer = ViewerCfg(origin_type="env", asset_name="Robot", body_name="base_link")
+    viewer = ViewerCfg(eye=(5.0, 5.0, 5.0), resolution=(1280, 720), origin_type="env", env_index=0, asset_name="robot")
     
     def __post_init__(self):
         # post init of parent
@@ -274,43 +268,48 @@ class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.events.base_external_force_torque.params["asset_cfg"].body_names = "base_link"
         self.events.base_external_force_torque.params["force_range"] = (-10.0, 10.0)
         self.events.base_external_force_torque.params["torque_range"] = (-5.0, 5.0)
-        self.events.base_external_force_torque.params["force_range"] = (-10.0, 10.0)
-        self.events.base_external_force_torque.params["torque_range"] = (-5.0, 5.0)
+        self.events.push_robot.params = {
+            "velocity_range": {
+                "x": (-1.0, 1.0),
+                "y": (-1.0, 1.0),
+                "z": (-1.0, 1.0),
+                "roll": (-1.0, 1.0),
+                "pitch": (-1.0, 1.0),
+                "yaw": (-1.0, 1.0)
+            }
+        }
 
         # ----- reward settings -----
         # -- task
-        self.rewards.track_lin_vel_xy_exp.weight = 3.25
-        self.rewards.track_ang_vel_z_exp.weight = 1.75
+        self.rewards.track_lin_vel_xy_exp.weight = 3.0
+        self.rewards.track_ang_vel_z_exp.weight = 1.5
         # -- root penalties
-        self.rewards.lin_vel_z_l2.weight = -1.25
+        self.rewards.lin_vel_z_l2.weight = -2.75
         self.rewards.ang_vel_xy_l2.weight = -0.1   
         self.rewards.flat_orientation_l2.weight= -0.0
         # -- joint penalties
-        self.rewards.dof_torques_l2.weight = -3e-05
-        self.rewards.dof_acc_l2.weight = -3e-07
+        self.rewards.dof_torques_l2.weight = -5e-06
+        self.rewards.dof_acc_l2.weight = -1.5e-07
         self.rewards.dof_pos_limits.weight = -3.0
         # -- action penalties
-        self.rewards.action_rate_l2.weight = -0.075
+        self.rewards.action_rate_l2.weight = -0.005
         # -- contact sensor
-        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_(hip|thigh)"), "threshold":1.0}
-        self.rewards.undesired_contacts.weight = 0.0
+        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold":1.0}
+        self.rewards.undesired_contacts.weight = -3.0
         # -- others
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*foot"
-        self.rewards.feet_air_time.params["threshold"] = 0.25
+        self.rewards.feet_air_time.params["threshold"] = 0.5
         self.rewards.feet_air_time.weight = 3.0
 
         # ----- termination settings -----
+        # enable the flowing termination terms in flat terrain
         self.terminations.base_contact = None
         self.terminations.hip_contact = None
-        self.terminations.illegal_body_slant = None
-        self.terminations.all_feet_over_air = None
 
 
 @configclass
 class UnitreeB2RoughEnvCfg_PLAY(UnitreeB2RoughEnvCfg):
-    # Viewer
-    viewer = ViewerCfg(origin_type="world", asset_name="Robot", body_name="base_link")
-    
+
     def __post_init__(self):
         # post init of parent
         super().__post_init__()

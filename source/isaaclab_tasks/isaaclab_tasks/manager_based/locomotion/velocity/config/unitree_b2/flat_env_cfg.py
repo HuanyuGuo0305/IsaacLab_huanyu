@@ -19,25 +19,25 @@ class UnitreeB2FlatEnvCfg(UnitreeB2RoughEnvCfg):
         # ----- override rewards -----
         self.rewards.base_height_l2.params["sensor_cfg"] = None
         # -- task
-        self.rewards.track_lin_vel_xy_exp.weight = 3.25
-        self.rewards.track_ang_vel_z_exp.weight = 1.75
+        self.rewards.track_lin_vel_xy_exp.weight = 3.0
+        self.rewards.track_ang_vel_z_exp.weight = 1.5
         # -- root penalties
-        self.rewards.lin_vel_z_l2.weight = -1.25
-        self.rewards.ang_vel_xy_l2.weight = -0.1   
-        self.rewards.flat_orientation_l2.weight= -2.75 
+        self.rewards.lin_vel_z_l2.weight = -2.0
+        self.rewards.ang_vel_xy_l2.weight = -0.1 
+        self.rewards.flat_orientation_l2.weight= -3.0 
         # -- joint penalties
-        self.rewards.dof_torques_l2.weight = -3e-05
-        self.rewards.dof_acc_l2.weight = -3e-07
+        self.rewards.dof_torques_l2.weight = -1e-05
+        self.rewards.dof_acc_l2.weight = -1.5e-07
         self.rewards.dof_pos_limits.weight = -3.0
         # -- action penalties
-        self.rewards.action_rate_l2.weight = -0.075
+        self.rewards.action_rate_l2.weight = -0.02
         # -- contact sensor
         self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_(hip|thigh)"), "threshold":1.0}
         self.rewards.undesired_contacts.weight = 0.0
         # -- others
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*foot"
-        self.rewards.feet_air_time.params["threshold"] = 0.25
-        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.feet_air_time.params["threshold"] = 0.4
+        self.rewards.feet_air_time.weight = 1.0
 
         # ----- terrain settings -----
         # change terrain to flat
@@ -50,9 +50,7 @@ class UnitreeB2FlatEnvCfg(UnitreeB2RoughEnvCfg):
         self.commands.base_velocity.heading_command = False
 
         # ----- termination settings -----
-        self.terminations.all_feet_over_air = None
         self.terminations.bad_orirentation = None
-        self.terminations.illegal_body_slant = None
 
  
 @configclass
