@@ -177,6 +177,26 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # reset environment
     obs = env.get_observations()
     timestep = 0
+
+    # Get the joints' order for sim2sim deployment
+    # Access the underlying isaac env
+
+    # Acess the articulation (robot) object
+    isaac_env = env.unwrapped
+    robot = None
+    if hasattr(isaac_env.scene, "articulations"):
+        robot = list(isaac_env.scene.articulations.values())[0]
+
+    if robot is not None:
+        print("\n================ ISAACLAB JOINT INFORMATION ================")
+        print("[INFO] Number of DOFs:", robot.num_joints)
+        print("[INFO] DOF names (order used by RL):")
+        for i, name in enumerate(robot.joint_names):
+            print(f"  {i:2d}: {name}")
+        print("============================================================\n")
+    else:
+        print("[WARNING] Could not find robot object to print DOF names.")
+
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()

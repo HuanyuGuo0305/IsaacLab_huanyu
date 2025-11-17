@@ -147,7 +147,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
     )
     body_lin_acc_l2 = RewTerm(
         func=mdp.body_lin_acc_l2,
-        weight=-0.01,
+        weight=-0.005,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
     )
 
@@ -161,7 +161,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
         setattr(self, attr_name, rew_term)  # setattr(object, name, value) <-> object.name = value
 
     # -- joint penalties
-    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.00025)
+    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
     dof_vel_limits = RewTerm(
         func=mdp.joint_vel_limits, 
         weight=0.0, 
@@ -183,7 +183,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
     )
     joint_pos_penalty = RewTerm(
         func=mdp.joint_pos_penalty,
-        weight=-0.2,
+        weight=-0.25,
         params={
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
@@ -194,7 +194,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
     )
     joint_mirror = RewTerm(
         func=mdp.joint_mirror,
-        weight=-0.05,
+        weight=-0.025,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "mirror_joints":[["FR_(hip|thigh|calf).*", "RL_(hip|thigh|calf).*"], 
@@ -281,18 +281,21 @@ class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # ----- reward settings -----
         # -- task
-        self.rewards.track_lin_vel_xy_exp.weight = 3.0
-        self.rewards.track_ang_vel_z_exp.weight = 1.5
+        self.rewards.track_lin_vel_xy_exp.weight = 3.5
+        self.rewards.track_ang_vel_z_exp.weight = 1.75
         # -- root penalties
-        self.rewards.lin_vel_z_l2.weight = -2.75
-        self.rewards.ang_vel_xy_l2.weight = -0.1   
+        self.rewards.lin_vel_z_l2.weight = -2.25
+        self.rewards.ang_vel_xy_l2.weight = -0.1  
         self.rewards.flat_orientation_l2.weight= -0.0
         # -- joint penalties
-        self.rewards.dof_torques_l2.weight = -5e-06
-        self.rewards.dof_acc_l2.weight = -1.5e-07
+        self.rewards.dof_torques_l2.weight = -1.25e-05
+        self.rewards.dof_acc_l2.weight = -5e-07
         self.rewards.dof_pos_limits.weight = -3.0
+        self.rewards.dof_vel_l2.weight = -0.00125
+        self.rewards.joint_pos_penalty.weight = -0.375
+        self.rewards.joint_mirror.weight = -0.05
         # -- action penalties
-        self.rewards.action_rate_l2.weight = -0.005
+        self.rewards.action_rate_l2.weight = -0.035
         # -- contact sensor
         self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold":1.0}
         self.rewards.undesired_contacts.weight = -3.0
