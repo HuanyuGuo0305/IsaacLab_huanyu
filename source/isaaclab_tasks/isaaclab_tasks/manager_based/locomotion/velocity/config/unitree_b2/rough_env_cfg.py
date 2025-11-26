@@ -15,8 +15,11 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.envs.common import ViewerCfg
 from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
+
+from isaaclab.terrains.config.b2_locomotion import ROUGH_TERRAINS_CFG 
 
 @configclass
 class UnitreeB2SceneCfg(MySceneCfg):  # Parent class defines terrain, robot (None), sensors, and lighting
@@ -47,7 +50,6 @@ class UnitreeB2ObservationCfg():
         """Observations for the policy group."""
         
         # observation terms (oder preserved)
-        # base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
         projected_gravity = ObsTerm(
             func=mdp.projected_gravity,
@@ -57,17 +59,11 @@ class UnitreeB2ObservationCfg():
         joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
         actions = ObsTerm(func=mdp.last_action)
-        height_scan = ObsTerm(
-            func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            noise=Unoise(n_min=-0.1, n_max=0.1),
-            clip=(-1.0, 1.0),
-        )
-        # imu = ObsTerm(func=mdp.imu_states, noise=Unoise(n_min=-0.1, n_max=0.1))
         
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
+            self.history_length = 5
     
     @configclass
     class CriticCfg(ObsGroup):
@@ -86,11 +82,11 @@ class UnitreeB2ObservationCfg():
             params={"sensor_cfg": SceneEntityCfg("height_scanner")},
             clip=(-1.0, 1.0),
         )
-        # imu = ObsTerm(func=mdp.imu_states)
         
         def __post_init__(self):
             self.enable_corruption = False  # noise disabled for critic
             self.concatenate_terms = True
+            self.history_length = 5
     
     # Observation groups
     policy: PolicyCfg = PolicyCfg()
@@ -110,7 +106,7 @@ class TerminationCfg():
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_hip"), "threshold":1.0},
     )
-    bad_orirentation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.9})
+    bad_orirentation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.8})
 
 
 @configclass
@@ -123,8 +119,8 @@ class UnitreeB2EventsCfg(EventCfg):
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "stiffness_distribution_params": (0.8, 1.2),
-            "damping_distribution_params": (0.8, 1.2),
+            "stiffness_distribution_params": (0.7, 1.3),
+            "damping_distribution_params": (0.7, 1.3),
             "operation": "scale",
             "distribution": "uniform",
         },
@@ -136,15 +132,6 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
     """Reward terms for the MDP."""
 
     # -- root penalties
-    base_height_l2 = RewTerm(
-        func=mdp.base_height_l2,
-        weight=-0.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="base_link"),
-            "sensor_cfg": SceneEntityCfg("height_scanner_base"),
-            "target_height": 0.53,   
-        },
-    )
     body_lin_acc_l2 = RewTerm(
         func=mdp.body_lin_acc_l2,
         weight=-0.005,
@@ -162,16 +149,6 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
 
     # -- joint penalties
     dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
-    dof_vel_limits = RewTerm(
-        func=mdp.joint_vel_limits, 
-        weight=0.0, 
-        params={"asset_cfg": SceneEntityCfg("robot", body_names=".*"), "soft_ratio": 1.0},
-    )
-    joint_power = RewTerm(
-        func=mdp.joint_power, 
-        weight=0.0, 
-        params={"asset_cfg": SceneEntityCfg("robot", body_names=".*")},
-    )
     stand_still = RewTerm(
         func=mdp.stand_still_joint_deviation_l1,
         weight=-0.1,
@@ -201,18 +178,22 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
                              ["FL_(hip|thigh|calf).*", "RR_(hip|thigh|calf).*"],]
         },
     )
-
-    # -- contact sensor
-    contact_forces = RewTerm(
-        func=mdp.contact_forces,
-        weight=0.0,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot",), "threshold": 100.0},
+    feet_slide = RewTerm(
+        func=mdp.feet_slide,
+        weight=-0.1,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+        },
     )
-
-    # -- other penalties
+    air_time_variance = RewTerm(
+        func=mdp.air_time_variance_penalty,
+        weight=-1.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot")},
+    )
     feet_height_body = RewTerm(
         func=mdp.feet_height_body,
-        weight=0.0,
+        weight=-3.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_foot"),
             "tanh_mult": 2.0,
@@ -220,9 +201,7 @@ class UnitreeB2RoughRewardsCfg(RewardsCfg):
             "command_name": "base_velocity",
         },
     )
-    upward = RewTerm(func=mdp.upward, weight=0.0)
-
-
+    energy = RewTerm(func=mdp.energy, weight=-2e-5)
 
 
 @configclass
@@ -235,21 +214,19 @@ class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
     rewards: UnitreeB2RoughRewardsCfg = UnitreeB2RoughRewardsCfg()
     
     # Viewer
-    viewer = ViewerCfg(eye=(5.0, 5.0, 5.0), resolution=(1280, 720), origin_type="env", env_index=0, asset_name="robot")
+    viewer = ViewerCfg(eye=(8.0, 0.0, 10.0), lookat=(5.0, -50.0, -10.0), resolution=(1280, 720), origin_type="world")
     
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
 
         # -----scene settings-----
+        # replace terrain generator with custom rough terrain
+        self.scene.terrain.terrain_generator = ROUGH_TERRAINS_CFG
         # set robot and height scanner
         self.scene.robot = UNITREE_B2_CFG.replace(prim_path='{ENV_REGEX_NS}/Robot')
         self.scene.height_scanner.prim_path = '{ENV_REGEX_NS}/Robot/base_link'
         self.scene.height_scanner_base.prim_path = '{ENV_REGEX_NS}/Robot/base_link'
-        # scale down the terrains because the robot is small
-        self.scene.terrain.terrain_generator.sub_terrains["boxes"].grid_height_range = (0.025, 0.1)
-        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
-        self.scene.terrain.terrain_generator.sub_terrains["random_rough"].noise_step = 0.01
 
         # -----action settings-----
         # reduce action scale
@@ -260,14 +237,40 @@ class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.commands.base_velocity.heading_command = False
         
         # ----- event settings -----
-        self.events.physics_material.params["static_friction_range"] = (0.7, 0.9)
-        self.events.physics_material.params["dynamic_friction_range"] = (0.5, 0.7)
+        self.events.physics_material.params["static_friction_range"] = (0.3, 1.2)
+        self.events.physics_material.params["dynamic_friction_range"] = (0.3, 1.2)
+        self.events.physics_material.params["restitution_range"] = (0.0, 0.15)
         self.events.add_base_mass.params["asset_cfg"].body_names = "base_link"
-        self.events.add_base_mass.params["mass_distribution_params"] = (-1.0, 3.0)
+        self.events.add_base_mass.params["mass_distribution_params"] = (-5.0, 5.0)
         self.events.base_com.params["asset_cfg"].body_names = "base_link"
+        self.events.base_com.params["com_range"] = {
+            "x": (-0.05, 0.05),
+            "y": (-0.05, 0.05),
+            "z": (-0.05, 0.05)
+        }
         self.events.base_external_force_torque.params["asset_cfg"].body_names = "base_link"
-        self.events.base_external_force_torque.params["force_range"] = (-10.0, 10.0)
-        self.events.base_external_force_torque.params["torque_range"] = (-5.0, 5.0)
+        self.events.base_external_force_torque.params["force_range"] = (-30.0, 30.0)
+        self.events.base_external_force_torque.params["torque_range"] = (-10.0, 10.0)
+        self.events.reset_robot_joints.params["position_range"] = (0.8, 1.2)
+        self.events.reset_robot_joints.params["velocity_range"] = (0.8, 1.2)
+        self.events.reset_base.params = {
+            "pose_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (0.0, 0.2),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-3.14, 3.14)
+            },
+            "velocity_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (-0.5, 0.5),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-0.5, 0.5),
+            },
+        }
         self.events.push_robot.params = {
             "velocity_range": {
                 "x": (-1.0, 1.0),
@@ -281,33 +284,32 @@ class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # ----- reward settings -----
         # -- task
-        self.rewards.track_lin_vel_xy_exp.weight = 3.5
+        self.rewards.track_lin_vel_xy_exp.weight = 3.25
         self.rewards.track_ang_vel_z_exp.weight = 1.75
         # -- root penalties
-        self.rewards.lin_vel_z_l2.weight = -2.25
-        self.rewards.ang_vel_xy_l2.weight = -0.1  
-        self.rewards.flat_orientation_l2.weight= -0.0
+        self.rewards.lin_vel_z_l2.weight = -1.75
+        self.rewards.ang_vel_xy_l2.weight = -0.15
+        self.rewards.flat_orientation_l2.weight= -3.0
         # -- joint penalties
-        self.rewards.dof_torques_l2.weight = -1.25e-05
-        self.rewards.dof_acc_l2.weight = -5e-07
+        self.rewards.dof_torques_l2.weight = -1.e-05
+        self.rewards.dof_acc_l2.weight = -2.5e-07
         self.rewards.dof_pos_limits.weight = -3.0
         self.rewards.dof_vel_l2.weight = -0.00125
         self.rewards.joint_pos_penalty.weight = -0.375
         self.rewards.joint_mirror.weight = -0.05
         # -- action penalties
-        self.rewards.action_rate_l2.weight = -0.035
+        self.rewards.action_rate_l2.weight = -0.05
         # -- contact sensor
-        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold":1.0}
-        self.rewards.undesired_contacts.weight = -3.0
+        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_thigh"), "threshold":1.0}
+        self.rewards.undesired_contacts.weight = -1.0
         # -- others
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*foot"
-        self.rewards.feet_air_time.params["threshold"] = 0.5
-        self.rewards.feet_air_time.weight = 3.0
+        self.rewards.feet_air_time.params["threshold"] = 0.7
+        self.rewards.feet_air_time.weight = 2.0
 
         # ----- termination settings -----
-        # enable the flowing termination terms in flat terrain
-        self.terminations.base_contact = None
-        self.terminations.hip_contact = None
+        self.terminations.bad_orirentation = None
+        # self.terminations.hip_contact = None
 
 
 @configclass
@@ -331,3 +333,11 @@ class UnitreeB2RoughEnvCfg_PLAY(UnitreeB2RoughEnvCfg):
         # remove random pushing event
         self.events.push_robot = None
         self.events.base_external_force_torque = None
+
+        # Change terrain to flat for visualization
+        USE_FLAT_TERRAIN = True
+        
+        if USE_FLAT_TERRAIN:
+            self.scene.terrain.terrain_type = "plane"
+            self.scene.terrain.terrain_generator = None
+            self.curriculum.terrain_levels = None

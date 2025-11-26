@@ -226,7 +226,7 @@ class RslRlBaseRunnerCfg:
     video: bool = False
     """Whether to record videos during training. Default is False."""
     
-    video_interval: int = 250
+    video_interval: int = 500
     """The number of iterations between video recordings. Default is 100."""
     
     video_length: int = 5

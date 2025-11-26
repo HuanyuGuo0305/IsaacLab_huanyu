@@ -57,6 +57,7 @@ import gymnasium as gym
 import os
 import time
 import torch
+from tensordict import TensorDictBase
 
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
@@ -206,6 +207,51 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             actions = policy(obs)
             # env stepping
             obs, _, _, _ = env.step(actions)
+
+            # # step counter
+            # if "global_step" not in locals():
+            #     global_step = 0
+            # global_step += 1
+
+            # # print height_scan info every 400 steps
+            # if global_step % 200 == 0:
+            #     # get obs tensor ([num_envs, num_obs])
+            #     if isinstance(obs, TensorDictBase):
+            #         obs_tensor = None
+            #         chosen_key = None
+            #         for k, v in obs.items():
+            #             if isinstance(v, torch.Tensor) and v.ndim == 2:
+            #                 obs_tensor = v
+            #                 chosen_key = k
+            #                 break
+            #         if obs_tensor is None:
+            #             print(f"[DEBUG] No 2D tensor found in obs TensorDict. Keys: {list(obs.keys())}")
+            #         else:
+            #             print(f"[DEBUG] Using obs key '{chosen_key}' for height_scan debug. Shape: {obs_tensor.shape}")
+
+            #     else:
+            #         obs_tensor = obs
+
+            #     if obs_tensor is not None:
+            #         obs_0 = obs_tensor[10].detach().cpu().numpy()
+            #         height_scan_0 = obs_0[45:]
+            #         first_10 = height_scan_0[:10]
+
+            #         print("\n HEIGHT SCAN FROM OBS ")
+            #         print(f"[step {global_step}] height_scan (env 0) first 10:", first_10)
+            #         print("min / max / mean:",
+            #             float(height_scan_0.min()),
+            #             float(height_scan_0.max()),
+            #             float(height_scan_0.mean()))
+                
+            #     sensor = isaac_env.scene.sensors["height_scanner"]
+            #     sensor_height_0 = sensor.data.pos_w[0, 2]           
+            #     ground_z_0 = sensor.data.ray_hits_w[0, :, 2].min() 
+
+            #     print("sensor_height_0:", float(sensor_height_0))
+            #     print("ground_z_0 (min hit z):", float(ground_z_0))
+            #     print("sensor_height_0 - ground_z_0:", float(sensor_height_0 - ground_z_0))
+
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

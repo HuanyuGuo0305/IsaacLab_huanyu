@@ -13,11 +13,9 @@ class UnitreeB2FlatEnvCfg(UnitreeB2RoughEnvCfg):
         # no height scan
         self.scene.height_scanner = None
         self.scene.height_scanner_base = None
-        self.observations.policy.height_scan = None
         self.observations.critic.height_scan = None
         
         # ----- override rewards -----
-        self.rewards.base_height_l2.params["sensor_cfg"] = None
         # -- task
         self.rewards.track_lin_vel_xy_exp.weight = 3.25
         self.rewards.track_ang_vel_z_exp.weight = 1.75
@@ -32,12 +30,12 @@ class UnitreeB2FlatEnvCfg(UnitreeB2RoughEnvCfg):
         # -- action penalties
         self.rewards.action_rate_l2.weight = -0.035
         # -- contact sensor
-        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_(hip|thigh)"), "threshold":1.0}
-        self.rewards.undesired_contacts.weight = 0.0
+        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_thigh"), "threshold":1.0}
+        self.rewards.undesired_contacts.weight = -1.0
         # -- others
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = ".*foot"
-        self.rewards.feet_air_time.params["threshold"] = 0.4
-        self.rewards.feet_air_time.weight = 1.5
+        self.rewards.feet_air_time.params["threshold"] = 0.7
+        self.rewards.feet_air_time.weight = 2.0
 
         # ----- terrain settings -----
         # change terrain to flat
