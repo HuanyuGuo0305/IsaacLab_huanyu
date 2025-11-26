@@ -45,7 +45,7 @@ class UnitreeB2FlatPPORunnerCfg(UnitreeB2RoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        self.max_iterations = 2000
+        self.max_iterations = 5000
         self.wandb_project = "unitree_b2_velocity_flat"
         self.experiment_name = "unitree_b2_velocity_flat"
         self.policy.actor_hidden_dims = [512, 256, 128]
