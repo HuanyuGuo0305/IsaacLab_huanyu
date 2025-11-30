@@ -291,7 +291,7 @@ class UnitreeB2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.ang_vel_xy_l2.weight = -0.15
         self.rewards.flat_orientation_l2.weight= -3.0
         # -- joint penalties
-        self.rewards.dof_torques_l2.weight = -1.e-05
+        self.rewards.dof_torques_l2.weight = -1.0e-05
         self.rewards.dof_acc_l2.weight = -2.5e-07
         self.rewards.dof_pos_limits.weight = -3.0
         self.rewards.dof_vel_l2.weight = -0.00125
