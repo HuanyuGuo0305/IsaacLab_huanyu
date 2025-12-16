@@ -32,7 +32,8 @@ class UnitreeB2WFlatEnvCfg(UnitreeB2WRoughEnvCfg):
         self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_thigh"), "threshold":1.0}
         self.rewards.undesired_contacts.weight = -1.0
         # others
-        self.rewards.feet_air_time.weight = 0.0
+        self.rewards.feet_air_time.params["threshold"] = 0.6
+        self.rewards.feet_air_time.weight = 2.0
 
         # ----- terrain settings -----
         # change terrain to flat

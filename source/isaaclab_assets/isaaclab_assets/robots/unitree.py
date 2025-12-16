@@ -304,7 +304,7 @@ UNITREE_B2W_CFG = ArticulationCfg(
             effort_limit_sim=20.0,
             velocity_limit_sim=50.0,
             stiffness=0.0,
-            damping=1.0,
+            damping=10.0,
             friction=0.0,
         ),
     },

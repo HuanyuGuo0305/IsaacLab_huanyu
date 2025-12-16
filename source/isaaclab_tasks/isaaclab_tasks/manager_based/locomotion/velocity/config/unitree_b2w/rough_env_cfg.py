@@ -4,7 +4,7 @@ from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import Lo
 
 
 from isaaclab_assets.robots.unitree import UNITREE_B2W_CFG
-from isaaclab.terrains.config.b2_locomotion import ROUGH_TERRAINS_CFG
+from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise 
@@ -326,7 +326,8 @@ class UnitreeB2WRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_thigh"), "threshold":1.0}
         
         # others
-        self.rewards.feet_air_time.weight = 0
+        self.rewards.feet_air_time.params["threshold"] = 0.6
+        self.rewards.feet_air_time.weight = 2.0
 
 
 @configclass
