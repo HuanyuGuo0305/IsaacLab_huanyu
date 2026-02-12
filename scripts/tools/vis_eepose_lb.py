@@ -1,0 +1,186 @@
+"""
+Visualize sampled EE poses as points in world frame.
+
+Input: reachable_poses_level_base.npy (N,7)
+       [x,y,z,qw,qx,qy,qz] in LEVEL BASE frame (LB)
+
+Level Base Frame (LB):
+- Origin: base origin in world (x,y,z)  (NOT projected to ground)
+- Orientation: base yaw kept, roll/pitch=0 (level)
+
+This script:
+- Spawns Unitree B2W+Z1
+- Optionally overrides base height for consistent visualization
+- Converts LB points -> World and draws them as debug points
+
+Usage:
+./isaaclab.sh -p scripts/tools/vis_eepose_lb.py --npy scripts/tools/reachable_poses_level_base.npy
+"""
+
+import argparse
+from isaaclab.app import AppLauncher
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--npy", type=str, default="reachable_poses_level_base.npy")
+parser.add_argument("--max_points", type=int, default=8000, help="max points to visualize")
+parser.add_argument("--point_size", type=float, default=3.0, help="debug point size (bigger looks like a ball)")
+parser.add_argument(
+    "--base_z",
+    type=float,
+    default=None,
+    help="Optional: override robot base height (world z) for visualization (e.g., 0.6017).",
+)
+
+AppLauncher.add_app_launcher_args(parser)
+args_cli = parser.parse_args()
+
+app_launcher = AppLauncher(args_cli)
+simulation_app = app_launcher.app
+
+import numpy as np
+import torch
+
+import isaaclab.sim as sim_utils
+import isaaclab.utils.math as math_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+from isaaclab.utils import configclass
+
+# robot cfg
+from isaaclab_assets.robots.unitree import UNITREE_B2WZ1_CFG  # isort: skip
+
+# IsaacLab debug draw (NO omni import)
+import isaacsim.util.debug_draw._debug_draw as omni_debug_draw
+
+
+@configclass
+class VisSceneCfg(InteractiveSceneCfg):
+    ground = AssetBaseCfg(prim_path="/World/defaultGroundPlane", spawn=sim_utils.GroundPlaneCfg())
+    light = AssetBaseCfg(
+        prim_path="/World/Light",
+        spawn=sim_utils.DomeLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
+    )
+    robot: ArticulationCfg = UNITREE_B2WZ1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+
+def yaw_only_quat(q_wxyz_batched: torch.Tensor) -> torch.Tensor:
+    """Extract yaw-only quaternion from full quaternion (wxyz), batched (N,4)."""
+    roll, pitch, yaw = math_utils.euler_xyz_from_quat(q_wxyz_batched)
+    zeros = torch.zeros_like(yaw)
+    return math_utils.quat_from_euler_xyz(zeros, zeros, yaw)
+
+
+@torch.no_grad()
+def main():
+    # -----------------------
+    # 1) Load poses in LB (N,7)
+    # -----------------------
+    poses_lb = np.load(args_cli.npy).astype(np.float32)
+    n_total = poses_lb.shape[0]
+
+    # only keep position
+    pos_lb = poses_lb[:, 0:3]  # (N,3)
+
+    # -----------------------
+    # 2) Subsample to max_points (random)
+    # -----------------------
+    max_points = int(args_cli.max_points)
+    if n_total > max_points:
+        idx = np.random.choice(n_total, size=max_points, replace=False)
+        pos_lb = pos_lb[idx]
+    n_vis = pos_lb.shape[0]
+
+    pos_lb_t = torch.from_numpy(pos_lb)  # (M,3)
+
+    # -----------------------
+    # 3) Start sim
+    # -----------------------
+    sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
+    sim = sim_utils.SimulationContext(sim_cfg)
+    sim.set_camera_view([2.5, 2.0, 1.8], [0.0, 0.0, 0.7])
+
+    scene_cfg = VisSceneCfg(num_envs=1, env_spacing=2.0)
+    scene = InteractiveScene(scene_cfg)
+
+    sim.reset()
+    sim_dt = sim.get_physics_dt()
+
+    scene.reset()
+    scene.update(sim_dt)
+
+    robot = scene["robot"]
+
+    # place robot at default root, but optional override base height
+    root_state = robot.data.default_root_state.clone()
+    root_state[:, :3] += scene.env_origins
+
+    if args_cli.base_z is not None:
+        root_state[:, 2] = float(args_cli.base_z)
+
+    robot.write_root_pose_to_sim(root_state[:, :7])
+    robot.write_root_velocity_to_sim(torch.zeros_like(root_state[:, 7:]))
+
+    joint_pos = robot.data.default_joint_pos.clone()
+    joint_vel = robot.data.default_joint_vel.clone()
+    robot.write_joint_state_to_sim(joint_pos, joint_vel)
+
+    scene.write_data_to_sim()
+    sim.step()
+    scene.update(sim_dt)
+
+    print(f"[INFO] Base height (world z): {float(robot.data.root_pos_w[0, 2]):.4f} m")
+
+    # cache frozen state (keep robot static)
+    root_pose_frozen = torch.cat([robot.data.root_pos_w, robot.data.root_quat_w], dim=-1).clone()  # (1,7)
+    root_vel_frozen = torch.zeros_like(root_state[:, 7:])  # (1,6)
+    joint_pos_frozen = joint_pos.clone()
+    joint_vel_frozen = torch.zeros_like(joint_vel)
+
+    # -----------------------
+    # 4) LB -> World transform using current robot root pose
+    # -----------------------
+    base_pos_w = robot.data.root_pos_w      # (1,3)
+    base_quat_w = robot.data.root_quat_w    # (1,4) wxyz
+
+    # LB origin: EXACT base origin in world (x,y,z)
+    lb_pos_w = base_pos_w.clone()
+
+    # LB orientation: yaw-only from base (level)
+    lb_quat_w = yaw_only_quat(base_quat_w)  # (1,4)
+
+    pos_lb_dev = pos_lb_t.to(device=robot.device)
+
+    q = lb_quat_w.repeat(pos_lb_dev.shape[0], 1)       # (M,4)
+    p0 = lb_pos_w.repeat(pos_lb_dev.shape[0], 1)       # (M,3)
+    pos_w = p0 + math_utils.quat_apply(q, pos_lb_dev)  # (M,3)
+
+    # -----------------------
+    # 5) Draw points
+    # -----------------------
+    dd = omni_debug_draw.acquire_debug_draw_interface()
+    dd.clear_points()
+
+    pts = pos_w.detach().cpu().tolist()
+    colors = [(1.0, 0.0, 0.0, 1.0)] * len(pts)
+    sizes = [float(args_cli.point_size)] * len(pts)
+
+    dd.draw_points(pts, colors, sizes)
+
+    print(f"[DONE] Drew {n_vis}/{n_total} LB points from {args_cli.npy}")
+
+    # keep running
+    while simulation_app.is_running():
+        robot.write_root_pose_to_sim(root_pose_frozen)
+        robot.write_root_velocity_to_sim(root_vel_frozen)
+        robot.write_joint_state_to_sim(joint_pos_frozen, joint_vel_frozen)
+
+        scene.write_data_to_sim()
+        sim.step()
+        scene.update(sim_dt)
+
+    sim.stop()
+
+
+if __name__ == "__main__":
+    main()
+    simulation_app.close()
