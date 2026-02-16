@@ -1966,3 +1966,231 @@ def generate_random_transformation_matrix(pos_boundary: float = 1, rot_boundary:
     T[:3, 3] = translation
 
     return T
+
+
+@torch.jit.script
+def sphere2cart(sphere_coords):
+    """ Convert spherical coordinates to cartesian coordinates
+    Args:
+        sphere_coords (torch.Tensor): Spherical coordinates (l, pitch, yaw)
+    Returns:
+        cart_coords (torch.Tensor): Cartesian coordinates (x, y, z)
+    """
+    l = sphere_coords[:, 0]
+    pitch = sphere_coords[:, 1]
+    yaw = sphere_coords[:, 2]
+    cart_coords = torch.zeros_like(sphere_coords)
+    cart_coords[:, 0] = l * torch.cos(pitch) * torch.cos(yaw)
+    cart_coords[:, 1] = l * torch.cos(pitch) * torch.sin(yaw)
+    cart_coords[:, 2] = l * torch.sin(pitch)
+    return cart_coords
+
+
+@torch.jit.script
+def quat_apply_wxyz(quat_wxyz: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
+    """
+    Applies a quaternion rotation to a 3D vector.
+    Assumes quaternion input is in [w, x, y, z] order.
+
+    Args:
+        quat_wxyz (Tensor): Quaternion tensor of shape (N, 4), in [w, x, y, z] order.
+        vec (Tensor): Vector tensor of shape (N, 3), to be rotated.
+
+    Returns:
+        Tensor: Rotated vectors of shape (N, 3).
+    """
+    shape = vec.shape
+    quat_wxyz = quat_wxyz.reshape(-1, 4)
+    vec = vec.reshape(-1, 3)
+
+    # Reorder to [x, y, z, w] for internal computation
+    quat_xyzw = torch.cat([quat_wxyz[:, 1:], quat_wxyz[:, :1]], dim=-1)
+
+    # Extract components
+    xyz = quat_xyzw[:, :3]
+    w = quat_xyzw[:, 3:]
+    t = 2.0 * xyz.cross(vec, dim=-1)
+    rotated_vec = vec + w * t + xyz.cross(t, dim=-1)
+
+    return rotated_vec.view(shape)
+
+
+def quat_mul_wxyz(a, b):
+    """Multiply two quaternions in [w, x, y, z] format.
+    
+    Args:
+        a (torch.Tensor): First quaternion in [w, x, y, z] format
+        b (torch.Tensor): Second quaternion in [w, x, y, z] format
+        
+    Returns:
+        torch.Tensor: Result quaternion in [w, x, y, z] format
+    """
+    assert a.shape == b.shape
+    shape = a.shape
+    a = a.reshape(-1, 4)
+    b = b.reshape(-1, 4)
+
+    w1, x1, y1, z1 = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+    w2, x2, y2, z2 = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+    
+    # Quaternion multiplication: q1 * q2
+    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+    
+    quat = torch.stack([w, x, y, z], dim=-1)
+    return quat.reshape(shape)
+
+@torch.jit.script
+def euler_from_quat_wxyz(quat_angle):
+    """
+    Convert a quaternion into euler angles (roll, pitch, yaw)
+    roll is rotation around x in radians (counterclockwise)
+    pitch is rotation around y in radians (counterclockwise)
+    yaw is rotation around z in radians (counterclockwise)
+    """
+    quat_xyzw = torch.cat([quat_angle[:, 1:], quat_angle[:, 0:1]], dim=1)
+    x = quat_xyzw[:,0]
+    y = quat_xyzw[:,1]
+    z = quat_xyzw[:,2]
+    w = quat_xyzw[:,3]
+    t0 = 2.0 * (w * x + y * z)
+    t1 = 1.0 - 2.0 * (x * x + y * y)
+    roll_x = torch.atan2(t0, t1)
+    
+    t2 = 2.0 * (w * y - z * x)
+    t2 = torch.clip(t2, -1, 1)
+    pitch_y = torch.asin(t2)
+    
+    t3 = 2.0 * (w * z + x * y)
+    t4 = 1.0 - 2.0 * (y * y + z * z)
+    yaw_z = torch.atan2(t3, t4)
+    
+    return roll_x, pitch_y, yaw_z # in radians
+
+
+# math helpers for interpolation and slerp
+
+def _normalize(v: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    return v / (torch.linalg.norm(v, dim=-1, keepdim=True).clamp_min(eps))
+
+
+def _quat_normalize(q: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    return q / (torch.linalg.norm(q, dim=-1, keepdim=True).clamp_min(eps))
+
+
+def _quat_slerp(q0: torch.Tensor, q1: torch.Tensor, t: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """Slerp for wxyz quaternions.
+    q0,q1: (...,4)
+    t: (...,) in [0,1]
+    """
+    q0 = _quat_normalize(q0, eps)
+    q1 = _quat_normalize(q1, eps)
+
+    # shortest path
+    dot = (q0 * q1).sum(dim=-1, keepdim=True)  # (...,1)
+    q1 = torch.where(dot < 0.0, -q1, q1)
+    dot = dot.abs().clamp(-1.0, 1.0)
+
+    # if very close, lerp
+    t_ = t.unsqueeze(-1)
+    close = dot > 0.9995
+    q_lerp = _quat_normalize(q0 + t_ * (q1 - q0), eps)
+
+    # slerp
+    omega = torch.acos(dot.clamp(-1.0 + 1e-6, 1.0 - 1e-6))  # (...,1)
+    sin_omega = torch.sin(omega).clamp_min(eps)
+    w0 = torch.sin((1.0 - t_) * omega) / sin_omega
+    w1 = torch.sin(t_ * omega) / sin_omega
+    q_slerp = _quat_normalize(w0 * q0 + w1 * q1, eps)
+
+    return torch.where(close, q_lerp, q_slerp)
+
+
+def _quat_from_rotmat_wxyz(R: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """Convert rotation matrix to quaternion (wxyz).
+    R: (...,3,3)
+    """
+    # Robust branch method
+    m00 = R[..., 0, 0]
+    m11 = R[..., 1, 1]
+    m22 = R[..., 2, 2]
+    tr = m00 + m11 + m22
+
+    q = torch.zeros((*R.shape[:-2], 4), device=R.device, dtype=R.dtype)
+
+    # tr > 0
+    mask0 = tr > 0.0
+    s0 = torch.sqrt((tr + 1.0).clamp_min(eps)) * 2.0  # 4*w
+    qw0 = 0.25 * s0
+    qx0 = (R[..., 2, 1] - R[..., 1, 2]) / s0
+    qy0 = (R[..., 0, 2] - R[..., 2, 0]) / s0
+    qz0 = (R[..., 1, 0] - R[..., 0, 1]) / s0
+
+    # otherwise pick max diagonal
+    mask1 = (~mask0) & (m00 > m11) & (m00 > m22)
+    s1 = torch.sqrt((1.0 + m00 - m11 - m22).clamp_min(eps)) * 2.0  # 4*qx
+    qw1 = (R[..., 2, 1] - R[..., 1, 2]) / s1
+    qx1 = 0.25 * s1
+    qy1 = (R[..., 0, 1] + R[..., 1, 0]) / s1
+    qz1 = (R[..., 0, 2] + R[..., 2, 0]) / s1
+
+    mask2 = (~mask0) & (~mask1) & (m11 > m22)
+    s2 = torch.sqrt((1.0 + m11 - m00 - m22).clamp_min(eps)) * 2.0  # 4*qy
+    qw2 = (R[..., 0, 2] - R[..., 2, 0]) / s2
+    qx2 = (R[..., 0, 1] + R[..., 1, 0]) / s2
+    qy2 = 0.25 * s2
+    qz2 = (R[..., 1, 2] + R[..., 2, 1]) / s2
+
+    mask3 = (~mask0) & (~mask1) & (~mask2)
+    s3 = torch.sqrt((1.0 + m22 - m00 - m11).clamp_min(eps)) * 2.0  # 4*qz
+    qw3 = (R[..., 1, 0] - R[..., 0, 1]) / s3
+    qx3 = (R[..., 0, 2] + R[..., 2, 0]) / s3
+    qy3 = (R[..., 1, 2] + R[..., 2, 1]) / s3
+    qz3 = 0.25 * s3
+
+    # assign by masks
+    q[..., 0] = torch.where(mask0, qw0, q[..., 0])
+    q[..., 1] = torch.where(mask0, qx0, q[..., 1])
+    q[..., 2] = torch.where(mask0, qy0, q[..., 2])
+    q[..., 3] = torch.where(mask0, qz0, q[..., 3])
+
+    q[..., 0] = torch.where(mask1, qw1, q[..., 0])
+    q[..., 1] = torch.where(mask1, qx1, q[..., 1])
+    q[..., 2] = torch.where(mask1, qy1, q[..., 2])
+    q[..., 3] = torch.where(mask1, qz1, q[..., 3])
+
+    q[..., 0] = torch.where(mask2, qw2, q[..., 0])
+    q[..., 1] = torch.where(mask2, qx2, q[..., 1])
+    q[..., 2] = torch.where(mask2, qy2, q[..., 2])
+    q[..., 3] = torch.where(mask2, qz2, q[..., 3])
+
+    q[..., 0] = torch.where(mask3, qw3, q[..., 0])
+    q[..., 1] = torch.where(mask3, qx3, q[..., 1])
+    q[..., 2] = torch.where(mask3, qy3, q[..., 2])
+    q[..., 3] = torch.where(mask3, qz3, q[..., 3])
+
+    return _quat_normalize(q, eps)
+
+
+def _quat_from_keypoints_lb(
+    kp0: torch.Tensor, kp1: torch.Tensor, kp2: torch.Tensor, dx: float, dz: float, eps: float = 1e-8
+) -> torch.Tensor:
+    """Recover EE orientation from (kp0,kp1,kp2) defined as:
+       kp1 = kp0 + R*[dx,0,0], kp2 = kp0 + R*[0,0,dz]
+    Returns quaternion (wxyz).
+    """
+    x_axis = (kp1 - kp0) / max(dx, eps)
+    z_axis = (kp2 - kp0) / max(dz, eps)
+
+    x_axis = _normalize(x_axis, eps)
+    z_axis = _normalize(z_axis, eps)
+
+    # make an orthonormal basis (right-handed)
+    y_axis = _normalize(torch.cross(z_axis, x_axis, dim=-1), eps)
+    x_axis = _normalize(torch.cross(y_axis, z_axis, dim=-1), eps)
+
+    # columns are basis vectors
+    R = torch.stack([x_axis, y_axis, z_axis], dim=-1)  # (N,3,3)
+    return _quat_from_rotmat_wxyz(R, eps)
