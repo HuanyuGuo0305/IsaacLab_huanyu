@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Offline check for keypoints-table orientation distribution.
 
@@ -19,7 +17,7 @@ Outputs:
 - Optional scatter plots (matplotlib) if --plot is set.
 
 Usage:
-  python check_kp_orientation.py --file scripts/tools/reachable_kp0kp1kp2_lb.npy --dx 0.30 --dz 0.30 --plot
+  python check_kp.py --file scripts/tools/reachable_kp0kp1kp2_lb.npy --plot
 """
 
 import argparse

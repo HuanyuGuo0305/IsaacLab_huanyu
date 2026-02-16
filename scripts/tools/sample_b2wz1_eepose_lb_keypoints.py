@@ -3,8 +3,8 @@ Sample collision-free reachable EE poses (pos+quat) in level-base frame (LB) for
 then convert to 3 keypoints and save as .npy.
 
 LB frame definition:
-- Origin: base frame origin (x,y,z) in world
-- Orientation: keep base yaw, roll/pitch set to 0 (level w.r.t world)
+- Origin: base frame origin (x,y,z)
+- Orientation: keep base yaw, roll/pitch set to 0
 
 Output per sample (in LB): (N, 9)
 [kp0(3), kp1(3), kp2(3)]
@@ -27,32 +27,31 @@ Collision-free:
 - ContactSensor on arm links, threshold on net forces
 
 Usage:
-./isaaclab.sh -p scripts/tools/sample_b2wz1_pose_to_kp2_level_base_frame.py \
-  --out scripts/tools/reachable_kp0kp1kp2_lb.npy
+./isaaclab.sh -p scripts/tools/sample_b2wz1_eepose_lb_keypoints.py --out scripts/tools/reachable_kp0kp1kp2_lb.npy
 """
 
 import argparse
 from isaaclab.app import AppLauncher
 
+# Simulation parameters and file paths
 parser = argparse.ArgumentParser(description="Sample collision-free reachable EE pose in LB, then save keypoints.")
 parser.add_argument("--num_envs", type=int, default=1024, help="Number of environments to spawn.")
 parser.add_argument("--num_samples", type=int, default=10000, help="How many valid samples to collect.")
+parser.add_argument("--out", type=str, default="scripts/tools/reachable_kp0kp1kp2_lb.npy", help="Output npy file path.")
+
+# Collision check parameters
 parser.add_argument("--settle_steps", type=int, default=60, help="Physics steps after reset before checking collision.")
 parser.add_argument("--force_threshold", type=float, default=3.0, help="Contact force threshold (N) for collision.")
-parser.add_argument("--out", type=str, default="scripts/tools/reachable_kp0kp1kp2_lb.npy", help="Output npy file path.")
-parser.add_argument(
-    "--arm_joints",
-    type=str,
-    default="joint1,joint2,joint3,joint4,joint5,joint6",
-    help="Comma-separated arm joint names.",
-)
+parser.add_argument("--arm_joints", type=str, default="joint1,joint2,joint3,joint4,joint5,joint6", help="Comma-separated arm joint names.")
 
-# Joint-limit filter and workspace uniformization
+# Joint-limit filter
 parser.add_argument("--joint_margin_deg", type=float, default=20.0, help="Filter out samples too close to arm joint limits.")
+
+# Workspace uniformization
 parser.add_argument("--voxel_size", type=float, default=0.03, help="Workspace voxel size (m) in LB frame.")
 parser.add_argument("--max_per_voxel", type=int, default=5, help="Max samples per voxel cell (by kp0 position).")
 
-# Hard front constraint (position)
+# Hard position constraint
 parser.add_argument("--front_min_x", type=float, default=0.00, help="Hard constraint: kp0_x must be > front_min_x (m).")
 
 # Hard orientation constraints (camera cone)
@@ -63,7 +62,7 @@ parser.add_argument("--pitch_max_deg", type=float, default=60.0, help="Hard cons
 parser.add_argument("--require_z_up", action="store_true", help="If set: require z_ee_lb.z > 0 (no flip).")
 parser.set_defaults(require_z_up=True)
 
-# Optional SOFT forward bias
+# SOFT forward bias
 parser.add_argument("--x_bias", type=float, default=0.40, help="Position forward bias strength in [0,1]. 0=off.")
 parser.add_argument("--x0", type=float, default=0.30, help="Sigmoid center for forward position preference (m).")
 parser.add_argument("--x_sigma", type=float, default=0.12, help="Sigmoid smoothness (m). Smaller=sharper.")
@@ -84,7 +83,7 @@ args_cli = parser.parse_args()
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-# ---- rest ----
+
 import os
 import numpy as np
 import torch
@@ -100,7 +99,7 @@ from isaaclab_assets.robots.unitree import UNITREE_B2WZ1_CFG  # isort: skip
 
 ARM_BODIES_REGEX = "(link01|link02|link03|link04|link05|link06|gripperStator|gripperMover)"
 
-# Z1 joint limits (deg) - optional override
+# Z1 joint limits (deg)
 Z1_LIMITS_DEG = {
     "joint1": (-150.0, 150.0),
     "joint2": (0.0, 180.0),
@@ -142,7 +141,7 @@ class SampleSceneCfg(InteractiveSceneCfg):
     )
 
 
-# ------------------------ Frame helper: LB (level-base) ------------------------ #
+# Frame helper - LB frame: origin at base, yaw-only (ignore roll/pitch)
 def yaw_only_quat(q_wxyz_batched: torch.Tensor) -> torch.Tensor:
     """Extract yaw-only quaternion from full quaternion (wxyz), batched (N,4)."""
     roll, pitch, yaw = math_utils.euler_xyz_from_quat(q_wxyz_batched)
@@ -176,7 +175,7 @@ def _get_joint_limits_rad(robot, arm_joint_names, arm_joint_ids: torch.Tensor):
 
 
 def _sample_arm_q(robot, arm_joint_names, arm_joint_ids: torch.Tensor):
-    """Mixture sampling: 80% uniform + 20% forward-reaching heuristic."""
+    """Mixture sampling: 80% uniform + 20% soft forward bias."""
     low, high = _get_joint_limits_rad(robot, arm_joint_names, arm_joint_ids)
     num_envs = robot.data.joint_pos.shape[0]
     J = arm_joint_ids.numel()

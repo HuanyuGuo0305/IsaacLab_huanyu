@@ -1,35 +1,23 @@
 """
 Visualize sampled EE poses as points in world frame.
 
-Input: reachable_poses_level_base.npy (N,7)
-       [x,y,z,qw,qx,qy,qz] in LEVEL BASE frame (LB)
-
-Level Base Frame (LB):
-- Origin: base origin in world (x,y,z)  (NOT projected to ground)
-- Orientation: base yaw kept, roll/pitch=0 (level)
-
 This script:
 - Spawns Unitree B2W+Z1
 - Optionally overrides base height for consistent visualization
 - Converts LB points -> World and draws them as debug points
 
 Usage:
-./isaaclab.sh -p scripts/tools/vis_eepose_lb.py --npy scripts/tools/reachable_poses_level_base.npy
+./isaaclab.sh -p scripts/tools/vis_eepose_lb.py --npy scripts/tools/reachable_kp0kp1kp2_lb.npy
 """
 
 import argparse
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--npy", type=str, default="reachable_poses_level_base.npy")
+parser.add_argument("--npy", type=str, default="reachable_kp0kp1kp2_lb.npy")
 parser.add_argument("--max_points", type=int, default=8000, help="max points to visualize")
 parser.add_argument("--point_size", type=float, default=3.0, help="debug point size (bigger looks like a ball)")
-parser.add_argument(
-    "--base_z",
-    type=float,
-    default=None,
-    help="Optional: override robot base height (world z) for visualization (e.g., 0.6017).",
-)
+parser.add_argument("--base_z", type=float, default=None, help="Optional: override robot base height (world z) for visualization (e.g., 0.6017).")
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -72,18 +60,14 @@ def yaw_only_quat(q_wxyz_batched: torch.Tensor) -> torch.Tensor:
 
 @torch.no_grad()
 def main():
-    # -----------------------
-    # 1) Load poses in LB (N,7)
-    # -----------------------
+    # 1) Load poses in LB (N,9)
     poses_lb = np.load(args_cli.npy).astype(np.float32)
     n_total = poses_lb.shape[0]
 
     # only keep position
     pos_lb = poses_lb[:, 0:3]  # (N,3)
 
-    # -----------------------
     # 2) Subsample to max_points (random)
-    # -----------------------
     max_points = int(args_cli.max_points)
     if n_total > max_points:
         idx = np.random.choice(n_total, size=max_points, replace=False)
@@ -92,9 +76,7 @@ def main():
 
     pos_lb_t = torch.from_numpy(pos_lb)  # (M,3)
 
-    # -----------------------
     # 3) Start sim
-    # -----------------------
     sim_cfg = sim_utils.SimulationCfg(dt=0.005, device=args_cli.device)
     sim = sim_utils.SimulationContext(sim_cfg)
     sim.set_camera_view([2.5, 2.0, 1.8], [0.0, 0.0, 0.7])
@@ -136,9 +118,7 @@ def main():
     joint_pos_frozen = joint_pos.clone()
     joint_vel_frozen = torch.zeros_like(joint_vel)
 
-    # -----------------------
     # 4) LB -> World transform using current robot root pose
-    # -----------------------
     base_pos_w = robot.data.root_pos_w      # (1,3)
     base_quat_w = robot.data.root_quat_w    # (1,4) wxyz
 
@@ -154,9 +134,7 @@ def main():
     p0 = lb_pos_w.repeat(pos_lb_dev.shape[0], 1)       # (M,3)
     pos_w = p0 + math_utils.quat_apply(q, pos_lb_dev)  # (M,3)
 
-    # -----------------------
     # 5) Draw points
-    # -----------------------
     dd = omni_debug_draw.acquire_debug_draw_interface()
     dd.clear_points()
 
