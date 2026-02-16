@@ -687,3 +687,70 @@ def current_time_s(env: ManagerBasedRLEnv) -> torch.Tensor:
 def remaining_time_s(env: ManagerBasedRLEnv) -> torch.Tensor:
     """The maximum time remaining in the episode (in seconds)."""
     return env.max_episode_length_s - env.episode_length_buf.unsqueeze(1) * env.step_dt
+
+
+"""
+End-effector state.
+"""
+
+
+@generic_io_descriptor(
+    dtype=torch.float32,
+    observation_type="EndEffectorKeypoints",
+    on_inspect=[record_shape, record_dtype, record_body_names],
+)
+def ee_current_kp(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    kp_dx: float = 0.30,
+    kp_dz: float = 0.30,
+    frame: str = "lb",   # "lb" | "base" | "world"
+    make_quat_unique: bool = True,
+) -> torch.Tensor:
+    """End-effector current keypoints (kp0,kp1,kp2).
+
+    Returns (num_envs, 9): [kp0(3), kp1(3), kp2(3)] in selected frame.
+
+    frame:
+      - world: kp computed directly in world frame.
+      - base:  kp computed in base frame.
+      - lb:    kp computed in Level-Base frame.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    ee_id = asset_cfg.body_ids[0]  # type: ignore
+
+    # --- EE pose in world ---
+    ee_pos_w = asset.data.body_pos_w[:, ee_id]      # (N,3)
+    ee_quat_w = asset.data.body_quat_w[:, ee_id]    # (N,4) wxyz
+
+    # --- base pose in world ---
+    base_pos_w = asset.data.root_pos_w              # (N,3)
+    base_quat_w = asset.data.root_quat_w            # (N,4) wxyz
+
+    if make_quat_unique:
+        ee_quat_w = math_utils.quat_unique(ee_quat_w)
+        base_quat_w = math_utils.quat_unique(base_quat_w)
+
+    # offsets in EE local
+    off_x = ee_pos_w.new_tensor([kp_dx, 0.0, 0.0]).unsqueeze(0).expand_as(ee_pos_w)
+    off_z = ee_pos_w.new_tensor([0.0, 0.0, kp_dz]).unsqueeze(0).expand_as(ee_pos_w)
+
+    if frame == "lb":
+        # LB: origin = base origin; orientation = yaw-only(base_quat_w)
+        roll, pitch, yaw = math_utils.euler_xyz_from_quat(base_quat_w)
+        zeros = torch.zeros_like(yaw)
+        lb_quat_w = math_utils.quat_from_euler_xyz(zeros, zeros, yaw)     # (N,4)
+        lb_quat_inv = math_utils.quat_conjugate(lb_quat_w)                # yaw-only inverse
+
+        # EE pose in LB
+        ee_pos_lb = math_utils.quat_apply_inverse(lb_quat_w, ee_pos_w - base_pos_w)  # (N,3)
+        ee_quat_lb = math_utils.quat_mul(lb_quat_inv, ee_quat_w)                     # (N,4)
+        if make_quat_unique:
+            ee_quat_lb = math_utils.quat_unique(ee_quat_lb)
+
+        kp0 = ee_pos_lb
+        kp1 = ee_pos_lb + math_utils.quat_apply(ee_quat_lb, off_x)
+        kp2 = ee_pos_lb + math_utils.quat_apply(ee_quat_lb, off_z)
+        return torch.cat([kp0, kp1, kp2], dim=-1)
+
+    raise ValueError(f"[ee_current_kp] Unknown frame='{frame}'. Use 'lb'|'base'|'world'.")
