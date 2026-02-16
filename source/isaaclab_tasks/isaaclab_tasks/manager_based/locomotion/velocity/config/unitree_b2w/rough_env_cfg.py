@@ -20,7 +20,7 @@ import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
 
 @configclass
 class UnitreeB2WObservationCfg():
-    """Observation sepecifications for the MDP."""
+    """Observation specifications for the MDP."""
     
     @configclass
     class PolicyCfg(ObsGroup):
