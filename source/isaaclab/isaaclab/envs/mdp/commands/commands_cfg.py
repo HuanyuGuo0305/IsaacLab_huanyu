@@ -13,7 +13,7 @@ from isaaclab.utils import configclass
 
 from .null_command import NullCommand
 from .pose_2d_command import TerrainBasedPose2dCommand, UniformPose2dCommand
-from .pose_command import UniformPoseCommand
+from .pose_command import UniformPoseCommand, PresampledKeypointsCommandLB, PresampledKeypointsInterpolateCommandLB
 from .velocity_command import NormalVelocityCommand, UniformVelocityCommand
 
 
@@ -246,3 +246,79 @@ class TerrainBasedPose2dCommandCfg(UniformPose2dCommandCfg):
 
     ranges: Ranges = MISSING
     """Distribution ranges for the sampled commands."""
+
+
+@configclass
+class PresampledKeypointsCommandLBCfg(CommandTermCfg):
+    """Configuration for a presampled keypoints command generator (Level-Base frame: LB).
+
+    LB frame:
+    - Origin: base origin in world (x,y,z)  
+    - Orientation: keep base yaw, roll/pitch = 0 
+
+    Expected file shape (N, 9):
+    [kp0x, kp0y, kp0z,  kp1x, kp1y, kp1z,  kp2x, kp2y, kp2z]
+    where kp0,kp1,kp2 are expressed in LB.
+    """
+
+    class_type: type = PresampledKeypointsCommandLB
+
+    asset_name: str = MISSING
+    body_name: str = MISSING
+    file_path: str = MISSING
+
+    sample_mode: str = "random"
+
+    # Must match your sampling offsets
+    kp_dx: float = 0.30
+    kp_dz: float = 0.30
+
+    # debug visualization (3 points per env, stacked)
+    goal_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/goal_kp_lb"
+    )
+    current_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/current_kp_w"
+    )
+
+    # scale down marker size
+    goal_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    current_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+
+
+@configclass
+class PresampledKeypointsInterpolateCommandLBCfg(CommandTermCfg):
+    """Config for presampled keypoints command generator (LB) with kp0- & rot-threshold interpolation.
+
+    Expected file shape (N,9) in LB:
+      [kp0(3), kp1(3), kp2(3)]
+    """
+
+    class_type: type = PresampledKeypointsInterpolateCommandLB
+
+    asset_name: str = MISSING
+    body_name: str = MISSING
+    file_path: str = MISSING
+
+    sample_mode: str = "random"
+
+    # Must match sampling offsets
+    kp_dx: float = 0.30
+    kp_dz: float = 0.30
+
+    # kp0 max jump in LB before interpolating
+    kp0_threshold: float = 0.20
+    rot_threshold: float = 0.40
+
+    # debug visualization (3 points per env, stacked)
+    goal_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/goal_kp_lb"
+    )
+    current_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/current_kp_w"
+    )
+
+    # scale down marker size
+    goal_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    current_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+
