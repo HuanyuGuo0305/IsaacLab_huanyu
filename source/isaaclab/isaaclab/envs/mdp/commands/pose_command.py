@@ -16,18 +16,13 @@ from typing import TYPE_CHECKING
 from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_unique, euler_from_quat_wxyz, euler_xyz_from_quat, quat_apply
+from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_unique, euler_xyz_from_quat, quat_apply
 from isaaclab.utils.math import _quat_from_keypoints_lb, _quat_slerp
 
 if TYPE_CHECKING:
-    from isaaclab.envs import ManagerBasedEnv, ManagerBasedRLEnv
+    from isaaclab.envs import ManagerBasedEnv
 
     from .commands_cfg import UniformPoseCommandCfg
-    from .commands_cfg import ProjectedBaseUniformPoseCommandCfg
-    from .commands_cfg import PresampledPoseCommandCfg
-    from .commands_cfg import PresampledPoseCommandPBCfg
-    from .commands_cfg import PresampledPoseCommandLBCfg
-    from .commands_cfg import PresampledKeypointsCommandPBCfg
     from .commands_cfg import PresampledKeypointsCommandLBCfg
     from .commands_cfg import PresampledKeypointsInterpolateCommandLBCfg
 

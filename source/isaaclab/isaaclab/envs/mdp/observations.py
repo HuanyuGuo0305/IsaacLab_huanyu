@@ -753,4 +753,4 @@ def ee_current_kp(
         kp2 = ee_pos_lb + math_utils.quat_apply(ee_quat_lb, off_z)
         return torch.cat([kp0, kp1, kp2], dim=-1)
 
-    raise ValueError(f"[ee_current_kp] Unknown frame='{frame}'. Use 'lb'|'base'|'world'.")
+    raise ValueError(f"[ee_current_kp] Unknown frame='{frame}'. Use 'lb'.")
