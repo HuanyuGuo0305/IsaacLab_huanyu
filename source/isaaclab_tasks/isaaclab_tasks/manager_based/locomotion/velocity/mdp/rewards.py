@@ -114,3 +114,36 @@ def stand_still_joint_deviation_l1(
     command = env.command_manager.get_command(command_name)
     # Penalize motion when command is nearly zero.
     return mdp.joint_deviation_l1(env, asset_cfg) * (torch.norm(command[:, :2], dim=1) < command_threshold)
+
+def stand_still_joint_deviation_l1_smooth(
+    env,
+    command_name: str,
+    command_threshold: float = 0.06,
+    transition_width: float = 0.03,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Smoothly penalize offsets from default joint positions when command is small.
+
+    When command norm is near zero, penalty weight is close to 1.
+    When command norm is well above threshold, penalty weight smoothly decays to 0.
+    """
+
+    command = env.command_manager.get_command(command_name)
+    cmd_norm = torch.norm(command[:, :2], dim=1)
+
+    deviation = mdp.joint_deviation_l1(env, asset_cfg)
+
+    lower = command_threshold - transition_width
+    upper = command_threshold + transition_width
+
+    # normalize to [0, 1]
+    x = (cmd_norm - lower) / max(upper - lower, 1e-6)
+    x = torch.clamp(x, 0.0, 1.0)
+
+    # smoothstep: 0 -> 1 smoothly
+    smooth = x * x * (3.0 - 2.0 * x)
+
+    # small command => weight 1, large command => weight 0
+    weight = 1.0 - smooth
+
+    return deviation * weight

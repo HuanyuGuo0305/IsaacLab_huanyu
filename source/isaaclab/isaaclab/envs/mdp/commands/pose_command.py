@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_unique, euler_xyz_from_quat, quat_apply
+from isaaclab.utils.math import combine_frame_transforms, compute_pose_error, quat_from_euler_xyz, quat_unique, euler_xyz_from_quat, quat_apply, quat_inv
 from isaaclab.utils.math import _quat_from_keypoints_lb, _quat_slerp
 
 if TYPE_CHECKING:
@@ -487,52 +487,75 @@ class PresampledKeypointsInterpolateCommandLB(CommandTerm):
         if k == 0:
             return
 
-        # sample candidates
+        # 1) sample candidates from table
         idx = self._pick_indices(k)
         kps_s = self._table[idx].clone()  # (k,9) in LB
         kp0_s, kp1_s, kp2_s = self._split_kps(kps_s)
 
-        # previous commands
-        kps_p = self.keypoints_command_lb[env_ids_t].clone()
-        kp0_p, kp1_p, kp2_p = self._split_kps(kps_p)
-
+        # 2) build "previous reference"
+        #    - if has previous command: use previous command
+        #    - else: use current EE keypoints (converted to LB)
         has_p = self._has_cmd[env_ids_t]  # (k,)
 
-        # default: use raw sample
-        kps_new = kps_s
+        # previous command in LB
+        kps_prev_cmd = self.keypoints_command_lb[env_ids_t].clone()
 
-        if has_p.any():
-            # reconstruct quats from keypoints
-            quat_p = _quat_from_keypoints_lb(kp0_p, kp1_p, kp2_p, self._dx, self._dz)
-            quat_s = _quat_from_keypoints_lb(kp0_s, kp1_s, kp2_s, self._dx, self._dz)
+        # current EE keypoints in world
+        kp0_cur_w, kp1_cur_w, kp2_cur_w = self._current_keypoints_w()
+        kp0_cur_w = kp0_cur_w[env_ids_t]
+        kp1_cur_w = kp1_cur_w[env_ids_t]
+        kp2_cur_w = kp2_cur_w[env_ids_t]
 
-            # alpha_pos
-            delta = kp0_s - kp0_p
-            dist = torch.linalg.norm(delta, dim=-1).clamp_min(1e-8)  # (k,)
-            alpha_pos = (self._kp0_threshold / dist).clamp(max=1.0)
+        # world -> LB
+        lb_pos_w, lb_quat_w = self._level_base_pose_w()
+        lb_pos_w = lb_pos_w[env_ids_t]
+        lb_quat_w = lb_quat_w[env_ids_t]
 
-            # alpha_rot
-            ang = self._quat_angle(quat_p, quat_s).clamp_min(1e-8)   # (k,)
-            alpha_rot = (self._rot_threshold / ang).clamp(max=1.0)
+        # translate into LB origin
+        kp0_cur_rel_w = kp0_cur_w - lb_pos_w
+        kp1_cur_rel_w = kp1_cur_w - lb_pos_w
+        kp2_cur_rel_w = kp2_cur_w - lb_pos_w
 
-            # final alpha
-            alpha = torch.minimum(alpha_pos, alpha_rot)  # (k,)
+        # rotate world -> LB  => apply inverse yaw quat
+        lb_quat_inv_w = quat_inv(lb_quat_w)
+        kp0_cur_lb = quat_apply(lb_quat_inv_w, kp0_cur_rel_w)
+        kp1_cur_lb = quat_apply(lb_quat_inv_w, kp1_cur_rel_w)
+        kp2_cur_lb = quat_apply(lb_quat_inv_w, kp2_cur_rel_w)
 
-            # need interpolation only if exceeded any threshold (and has previous)
-            need = ((dist > self._kp0_threshold) | (ang > self._rot_threshold)) & has_p
-            alpha_eff = torch.where(need, alpha, torch.ones_like(alpha))
+        kps_cur_lb = self._pack_kps(kp0_cur_lb, kp1_cur_lb, kp2_cur_lb)
 
-            # interpolate
-            kp0_new = kp0_p + alpha_eff.unsqueeze(-1) * delta
-            quat_new = _quat_slerp(quat_p, quat_s, alpha_eff)
+        # choose previous reference
+        kps_p = torch.where(has_p.unsqueeze(-1), kps_prev_cmd, kps_cur_lb)
+        kp0_p, kp1_p, kp2_p = self._split_kps(kps_p)
 
-            kp1_new, kp2_new = self._kps_from_pose(kp0_new, quat_new)
-            kps_interp = self._pack_kps(kp0_new, kp1_new, kp2_new)
+        # 3) reconstruct pose from keypoints
+        quat_p = _quat_from_keypoints_lb(kp0_p, kp1_p, kp2_p, self._dx, self._dz)
+        quat_s = _quat_from_keypoints_lb(kp0_s, kp1_s, kp2_s, self._dx, self._dz)
 
-            # apply only for envs with previous command; others still use sample
-            kps_new = torch.where(has_p.unsqueeze(-1), kps_interp, kps_s)
+        # 4) alpha_pos from kp0 threshold
+        delta = kp0_s - kp0_p
+        dist = torch.linalg.norm(delta, dim=-1).clamp_min(1e-8)  # (k,)
+        alpha_pos = (self._kp0_threshold / dist).clamp(max=1.0)
 
-        self.keypoints_command_lb[env_ids_t] = kps_new
+        # 5) alpha_rot from rotation threshold
+        ang = self._quat_angle(quat_p, quat_s).clamp_min(1e-8)   # (k,)
+        alpha_rot = (self._rot_threshold / ang).clamp(max=1.0)
+
+        # 6) final alpha
+        alpha = torch.minimum(alpha_pos, alpha_rot)  # (k,)
+
+        # 7) if already within both thresholds, accept raw sample directly
+        within = (dist <= self._kp0_threshold) & (ang <= self._rot_threshold)
+        alpha_eff = torch.where(within, torch.ones_like(alpha), alpha)
+
+        # 8) interpolate
+        kp0_new = kp0_p + alpha_eff.unsqueeze(-1) * delta
+        quat_new = _quat_slerp(quat_p, quat_s, alpha_eff)
+        kp1_new, kp2_new = self._kps_from_pose(kp0_new, quat_new)
+        kps_interp = self._pack_kps(kp0_new, kp1_new, kp2_new)
+
+        # 9) save
+        self.keypoints_command_lb[env_ids_t] = kps_interp
         self._has_cmd[env_ids_t] = True
 
     def _update_command(self):

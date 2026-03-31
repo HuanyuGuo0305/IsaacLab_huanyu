@@ -202,7 +202,7 @@ def keypoints_command_progress_lb_robust(
     asset_cfg,
     kp_dx: float = 0.30,
     kp_dz: float = 0.30,
-    active_window_s: float = 6.0,
+    active_window_s: float = 2.0,
     pos_clip: float = 0.20,
     neg_clip: float = 0.05,
     w_overshoot: float = 0.5,
@@ -359,3 +359,149 @@ def keypoints_command_tracking_finetune_lb(
 
     r = (w0 * r0 + w1 * r1 + w2 * r2) / (w0 + w1 + w2)
     return r
+
+
+def keypoints_command_progress_lb_robust_antijitter(
+    env,
+    command_name: str,
+    asset_cfg,
+    kp_dx: float = 0.30,
+    kp_dz: float = 0.30,
+    active_window_s: float = 3.0,
+    progress_deadband: float = 0.06,
+    improve_deadband: float = 0.002,
+    pos_clip: float = 0.03,
+    neg_clip: float = 0.03,
+    w_overshoot: float = 1.0,
+    eps: float = 1e-6,
+):
+    """
+    Anti-jitter robust progress reward (LB frame).
+
+    Key ideas:
+    - Only reward progress when still meaningfully far from the target.
+    - Ignore tiny step-to-step distance changes caused by noise/jitter.
+    - Penalize moving away from the target with roughly symmetric strength.
+    - Best used as an early-stage shaping reward, then decayed.
+
+    Args:
+        active_window_s:
+            Only active during the first part of each command.
+        progress_deadband:
+            If mean keypoint error is below this threshold, disable progress reward.
+            This prevents exploiting tiny oscillations near the target.
+        improve_deadband:
+            Minimum step-to-step improvement / worsening to count as real motion.
+            Smaller changes are treated as zero.
+        pos_clip:
+            Max positive reward per step.
+        neg_clip:
+            Max negative reward magnitude per step before weighting.
+        w_overshoot:
+            Penalty multiplier for moving away from target.
+    """
+
+    asset = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)  # (N, 9)
+    if command.shape[-1] != 9:
+        raise ValueError(
+            f"[keypoints_command_progress_lb_robust_antijitter] Expected command dim 9, got {tuple(command.shape)}"
+        )
+
+    cmd_term = env.command_manager.get_term(command_name)
+    N = env.num_envs
+    device = env.device
+
+    # ------------------------------------------------------------------
+    # Persistent state buffers
+    # ------------------------------------------------------------------
+    if not hasattr(cmd_term, "_prog_prev_d"):
+        cmd_term._prog_prev_d = torch.zeros((N, 3), device=device)
+        cmd_term._prog_prev_valid = torch.zeros((N,), dtype=torch.bool, device=device)
+        cmd_term._prog_elapsed_s = torch.zeros((N,), device=device)
+        cmd_term._prog_last_counter = torch.full((N,), -1, device=device, dtype=torch.long)
+
+    # reset on command change
+    cc = cmd_term.command_counter
+    changed = cc != cmd_term._prog_last_counter
+    if torch.any(changed):
+        cmd_term._prog_prev_valid[changed] = False
+        cmd_term._prog_elapsed_s[changed] = 0.0
+        cmd_term._prog_last_counter[changed] = cc[changed]
+
+    cmd_term._prog_elapsed_s += float(env.step_dt)
+    active_mask = cmd_term._prog_elapsed_s <= float(active_window_s)
+
+    # ------------------------------------------------------------------
+    # Desired keypoints in world
+    # ------------------------------------------------------------------
+    kp0_lb = command[:, 0:3]
+    kp1_lb = command[:, 3:6]
+    kp2_lb = command[:, 6:9]
+
+    lb_pos_w, lb_quat_w = _level_base_pose_w(asset)
+    kp0_des_w, _ = combine_frame_transforms(lb_pos_w, lb_quat_w, kp0_lb)
+    kp1_des_w, _ = combine_frame_transforms(lb_pos_w, lb_quat_w, kp1_lb)
+    kp2_des_w, _ = combine_frame_transforms(lb_pos_w, lb_quat_w, kp2_lb)
+
+    # ------------------------------------------------------------------
+    # Current EE keypoints in world
+    # ------------------------------------------------------------------
+    body_id = asset_cfg.body_ids[0]
+    if isinstance(body_id, (list, tuple)):
+        body_id = body_id[0]
+    body_id = int(body_id)
+
+    ee_pos_w = asset.data.body_pos_w[:, body_id, :]
+    ee_quat_w = asset.data.body_quat_w[:, body_id, :]
+
+    off_x = ee_pos_w.new_tensor([kp_dx, 0.0, 0.0]).unsqueeze(0).expand(N, 3)
+    off_z = ee_pos_w.new_tensor([0.0, 0.0, kp_dz]).unsqueeze(0).expand(N, 3)
+
+    kp0_cur_w = ee_pos_w
+    kp1_cur_w = ee_pos_w + quat_apply(ee_quat_w, off_x)
+    kp2_cur_w = ee_pos_w + quat_apply(ee_quat_w, off_z)
+
+    # ------------------------------------------------------------------
+    # Distances
+    # ------------------------------------------------------------------
+    d0 = torch.linalg.norm(kp0_cur_w - kp0_des_w, dim=1)
+    d1 = torch.linalg.norm(kp1_cur_w - kp1_des_w, dim=1)
+    d2 = torch.linalg.norm(kp2_cur_w - kp2_des_w, dim=1)
+    d_now = torch.stack([d0, d1, d2], dim=1)  # (N, 3)
+
+    d_now_mean = d_now.mean(dim=1)
+
+    # ------------------------------------------------------------------
+    # Reward
+    # ------------------------------------------------------------------
+    r = torch.zeros((N,), device=device)
+
+    # only compute progress reward if:
+    # 1) we have a valid previous distance
+    # 2) within active window
+    # 3) still meaningfully far from target
+    valid = cmd_term._prog_prev_valid & active_mask & (d_now_mean > float(progress_deadband))
+
+    if torch.any(valid):
+        d_prev = cmd_term._prog_prev_d[valid]
+        d_cur = d_now[valid]
+
+        delta = d_prev - d_cur  # positive => improvement
+
+        # ignore tiny per-step fluctuations caused by jitter / measurement noise
+        improvement = torch.clamp(delta - float(improve_deadband), min=0.0)
+        overshoot = torch.clamp((-delta) - float(improve_deadband), min=0.0)
+
+        r_pos = torch.clamp(improvement.mean(dim=1), max=float(pos_clip))
+        r_neg = torch.clamp(overshoot.mean(dim=1), max=float(neg_clip))
+
+        r[valid] = r_pos - float(w_overshoot) * r_neg
+
+    # ------------------------------------------------------------------
+    # Update buffers
+    # ------------------------------------------------------------------
+    cmd_term._prog_prev_d[active_mask] = d_now[active_mask]
+    cmd_term._prog_prev_valid[active_mask] = True
+
+    return torch.nan_to_num(r, nan=0.0, posinf=0.0, neginf=0.0)

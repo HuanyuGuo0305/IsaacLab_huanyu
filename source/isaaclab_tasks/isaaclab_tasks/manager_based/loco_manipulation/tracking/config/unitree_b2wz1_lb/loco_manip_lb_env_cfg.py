@@ -53,12 +53,17 @@ class UnitreeB2WZ1LBLocoManipObservationCfg:
                 "frame": "lb",
             },
         )
-        joint_pos = ObsTerm(
+        joint_pos_leg = ObsTerm(
             func=mdp.joint_pos_rel,
             params={"asset_cfg": SceneEntityCfg("robot")},
             noise=Unoise(n_min=-0.01, n_max=0.01)
         )
-        joint_vel_legged_wheel = ObsTerm(
+        joint_pos_arm = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            noise=Unoise(n_min=-0.01, n_max=0.01)
+        )
+        joint_vel_leg = ObsTerm(
             func=mdp.joint_vel_rel, 
             params={"asset_cfg": SceneEntityCfg("robot")},
             noise=Unoise(n_min=-0.8, n_max=0.8)
@@ -66,14 +71,19 @@ class UnitreeB2WZ1LBLocoManipObservationCfg:
         joint_vel_arm = ObsTerm(
             func=mdp.joint_vel_rel, 
             params={"asset_cfg": SceneEntityCfg("robot")},
-            noise=Unoise(n_min=-0.2, n_max=0.2)
+            noise=Unoise(n_min=-0.25, n_max=0.25)
+        )
+        joint_vel_wheel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            noise=Unoise(n_min=-0.8, n_max=0.8)
         )
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
-            self.history_length = 5
+            self.history_length = 3
     
     @configclass
     class CriticCfg(ObsGroup):
@@ -118,7 +128,7 @@ class UnitreeB2WZ1LBLocoManipObservationCfg:
         def __post_init__(self):
             self.enable_corruption = False  # noise disabled for critic
             self.concatenate_terms = True
-            self.history_length = 5
+            self.history_length = 3
     
     # Observation groups
     policy: PolicyCfg = PolicyCfg()
@@ -135,25 +145,39 @@ class UnitreeB2WZ1LBLocoManipActionCfg():
         scale=0.25, 
         use_default_offset=True
     )
-
-    arm_joint_pos_joint1 = mdp.JointPositionActionCfg(
-        asset_name="robot", 
-        joint_names=[".*"], 
-        scale=1.0, 
-        use_default_offset=True
+    
+    arm_joint_pos_1 = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["joint1"],
+        scale=0.25,
+        use_default_offset=True,
     )
 
-    arm_joint_pos_rest = mdp.JointPositionActionCfg(
+    arm_joint_pos_2 = mdp.JointPositionActionCfg(
         asset_name="robot",
-        joint_names=[".*"],
-        scale=0.75,
+        joint_names=["joint2"],
+        scale=0.40,
+        use_default_offset=True,
+    )
+
+    arm_joint_pos_345 = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["joint3", "joint4", "joint5"],
+        scale=0.25,
+        use_default_offset=True,
+    )
+
+    arm_joint_pos_6 = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["joint6"],
+        scale=0.20,
         use_default_offset=True,
     )
 
     joint_vel = mdp.JointVelocityActionCfg(
         asset_name="robot", 
         joint_names=[".*"], 
-        scale=3.0, 
+        scale=4.0, 
         use_default_offset=True
     )
 
@@ -182,7 +206,7 @@ class UnitreeB2WZ1LBLocoManipCommandsCfg():
     ee_kp = mdp.PresampledKeypointsInterpolateCommandLBCfg(
         asset_name="robot",
         body_name="gripperStator",
-        resampling_time_range=(4.0, 4.0),
+        resampling_time_range=(8.0, 8.0),
         debug_vis=True,
         file_path="scripts/tools/reachable_kp0kp1kp2_lb.npy",
         sample_mode="random",
@@ -221,32 +245,12 @@ class UnitreeB2WZ1LBLocoManipEventCfg(EventCfg):
     )
 
     # Randomize arm joint positions at reset to encourage exploration
-    reset_arm_joint_offset_joint_1256 = EventTerm(
+    reset_arm_joint_offset_joint = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint1", "joint2", "joint5", "joint6"]),
-            "position_range": (-0.25, 0.25), 
-            "velocity_range": (0.0, 0.0),
-        }
-    )
-
-    reset_arm_joint_offset_joint_3 = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint3"]),
-            "position_range": (-0.35, 0.15), 
-            "velocity_range": (0.0, 0.0),
-        }
-    )
-
-    reset_arm_joint_offset_joint_4 = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint4"]),
-            "position_range": (-0.175, 0.325), 
+            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]),
+            "position_range": (-0.20, 0.20), 
             "velocity_range": (0.0, 0.0),
         }
     )
@@ -258,7 +262,7 @@ class UnitreeB2WZ1LBLocoManipEventCfg(EventCfg):
         interval_range_s=(10.0, 15.0),
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
-            "force_range": (-2.5, 2.5),
+            "force_range": (-2.0, 2.0),
             "torque_range": (-1.0, 1.0),
         },
     )
@@ -271,71 +275,56 @@ class UnitreeB2WZ1LBLocoManipRewardsCfg(RewardsCfg):
     # -- task (arm)
     ee_kp_tracking_delayed = RewTerm(
         func=manipulation_mdp.keypoints_command_error_exp_lb_delayed,
-        weight=3.0,
+        weight=12.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
             "command_name": "ee_kp",
-            "std": 0.5,
+            "std": 0.25,
             "std0": 0.25,
             "std1": 0.25,
-            "std2": 0.35,
+            "std2": 0.30,
             "kp_dx": 0.30,
             "kp_dz": 0.30,
-            "w0": 1.25,
+            "w0": 1.2,
             "w1": 1.0,
             "w2": 1.0,
-            "track_window_s": 2.0,  
+            "track_window_s": 5.0,  
         },
     )
 
-    ee_kp_tracking_finetune = RewTerm(
-        func=manipulation_mdp.keypoints_command_tracking_finetune_lb,
-        weight=1.0,
+    ee_kp_progress = RewTerm(
+        func=manipulation_mdp.keypoints_command_progress_lb_robust_antijitter,
+        weight=20.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
             "command_name": "ee_kp",
+            "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
             "kp_dx": 0.30,
             "kp_dz": 0.30,
-            "eps": 0.20,
-            "w0": 1.25,
-            "w1": 1.0,
-            "w2": 1.0,
-        },
-    )
 
-    ee_kp_progress_robust = RewTerm(
-        func=manipulation_mdp.keypoints_command_progress_lb_robust,
-        weight=75.0,   
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
-            "command_name": "ee_kp",
-            "kp_dx": 0.30,
-            "kp_dz": 0.30,
-            "active_window_s": 2.0,
-            "pos_clip": 0.25,
-            "neg_clip": 0.10,
-            "w_overshoot": 0.25,
+            # progress only in early stage
+            "active_window_s": 3.0,
+
+            # anti-jitter
+            "progress_deadband": 0.06,
+            "improve_deadband": 0.002,
+
+            # cap per-step shaping magnitude
+            "pos_clip": 0.10,
+            "neg_clip": 0.05,
+            "w_overshoot": 0.8,
+            "eps": 1e-6,
         },
     )
     
     # -- root penalties
     body_lin_acc_l2 = RewTerm(
         func=mdp.body_lin_acc_l2,
-        weight=-0.002,
+        weight=-0.005,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
     )
 
     # -- leg joint penalties
-    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
-    stand_still = RewTerm(
-        func=mdp.stand_still_joint_deviation_l1,
-        weight=-2.0,
-        params={
-            "command_name": "base_velocity",
-            "command_threshold": 0.06,
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-        },
-    )
+    dof_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.00125)
     joint_power = RewTerm(
         func=mdp.joint_power,
         weight=-1.0e-05,
@@ -343,20 +332,30 @@ class UnitreeB2WZ1LBLocoManipRewardsCfg(RewardsCfg):
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         },
     )
-    joint_pos_penalty = RewTerm(
-        func=mdp.joint_pos_penalty,
-        weight=-0.3,
+    stand_still = RewTerm(
+        func=mdp.stand_still_joint_deviation_l1_smooth,
+        weight=-1.0,
         params={
             "command_name": "base_velocity",
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "command_threshold": 0.05,
+            "transition_width": 0.03,
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+        },
+    )
+    joint_pos_penalty = RewTerm(
+        func=mdp.joint_pos_penalty,
+        weight=-0.5,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
             "stand_still_scale": 3.0,
-            "velocity_threshold": 0.20,
+            "velocity_threshold": 0.25,
             "command_threshold": 0.10,
-        }
+        },
     )
     joint_mirror = RewTerm(
         func=mdp.joint_mirror,
-        weight=-0.025,
+        weight=-0.05,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "mirror_joints":[["FR_(hip|thigh|calf).*", "FL_(hip|thigh|calf).*"],
@@ -366,66 +365,59 @@ class UnitreeB2WZ1LBLocoManipRewardsCfg(RewardsCfg):
 
     # -- arm penalties
     arm_dof_torques_l2 = RewTerm(
-        func=mdp.joint_torques_l2, weight=-1.0e-5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
+        func=mdp.joint_torques_l2, weight=-5.0e-5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
     )
     arm_dof_acc_l2 = RewTerm(
-        func=mdp.joint_acc_l2, weight=-5.0e-5, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
+        func=mdp.joint_acc_l2, weight=-1.0e-6, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
     )
     arm_dof_pos_limits = RewTerm(
-        func=mdp.joint_pos_limits, weight=-0.10, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
+        func=mdp.joint_pos_limits, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
     )
     arm_dof_vel_l2 = RewTerm(
-        func=mdp.joint_vel_l2, weight=-2.0e-03, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
+        func=mdp.joint_vel_l2, weight=-0.01, params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*")}
     )
     ee_jitter_vel = RewTerm(
         func=mdp.ee_jitter_lin_vel_l2_delayed,
-        weight=-0.15,  
+        weight=-0.25,  
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
             "command_name": "ee_kp",
-            "track_window_s": 2.0,
+            "track_window_s": 5.0,
             "frame": "b",
             "axes": "xyz",
         },
     )
     ee_jitter_dv = RewTerm(
         func=mdp.ee_jitter_lin_vel_change_l2_delayed,
-        weight=-0.15,
+        weight=-0.20,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
             "command_name": "ee_kp",
-            "track_window_s": 2.0,
+            "track_window_s": 5.0,
             "frame": "b",
             "axes": "xyz",
             "clip_max": 2.0,
         },
     )
-    arm_dof_acc_l2_delayed = RewTerm(
-        func=mdp.joint_acc_l2_delayed,
-        weight=-5.0e-5,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint1","joint2","joint3","joint4","joint5","joint6"]),
-            "command_name": "ee_kp",
-            "track_window_s": 2.0,
-        },
-    )
 
     # -- wheel penalties
     dof_torques_wheel_l2 = RewTerm(
-        func=mdp.joint_torques_l2, weight=-2.0e-5, params={"asset_cfg": SceneEntityCfg("robot")}
+        func=mdp.joint_torques_l2, weight=-5.0e-05, params={"asset_cfg": SceneEntityCfg("robot")}
     )
     dof_vel_wheel_l2 = RewTerm(
-        func=mdp.joint_vel_l2, weight=-1.0e-5, params={"asset_cfg": SceneEntityCfg("robot")}
+        func=mdp.joint_vel_l2, weight=-0.0, params={"asset_cfg": SceneEntityCfg("robot")}
     )
     dof_acc_wheel_l2 = RewTerm(
-        func=mdp.joint_acc_l2, weight=-2.0e-9, params={"asset_cfg": SceneEntityCfg("robot")}
+        func=mdp.joint_acc_l2, weight=-2.0e-8, params={"asset_cfg": SceneEntityCfg("robot")}
     )
     
     # -- action penalties --
-    action_rate_leg_l2 = RewTerm(func=mdp.action_rate_l2_leg, weight=-0.02)
-    action_rate_wheel_l2 = RewTerm(func=mdp.action_rate_l2_wheel, weight=-0.02)
-    action_rate_arm_joint1_l2 = RewTerm(func=mdp.action_rate_l2_arm_joint1, weight=-3.0e-03)
-    action_rate_arm_joint_rest_l2 = RewTerm(func=mdp.action_rate_l2_arm_joint_rest, weight=-2.0e-03)
+    action_rate_leg_l2 = RewTerm(func=mdp.action_rate_l2_leg, weight=-0.035)
+    action_rate_wheel_l2 = RewTerm(func=mdp.action_rate_l2_wheel, weight=-0.025)
+    action_rate_arm_l2 = RewTerm(func=mdp.action_rate_l2_arm, weight=-0.035)
+    arm_action_l2 = RewTerm(func=mdp.action_l2_arm, weight=-0.0075)
+    leg_action_l2 = RewTerm(func=mdp.action_l2_leg, weight=-0.0)
+    wheel_action_l2 = RewTerm(func=mdp.action_l2_wheel, weight=-0.0)
 
     # -- other penalties --
     arm_contacts = RewTerm(
@@ -443,12 +435,12 @@ class UnitreeB2WZ1LBLocoManipTerminationCfg():
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold":1.0},
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold": 30.0},
     )
-    hip_contact = DoneTerm(
-        func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_hip"), "threshold":3.0},
-    )
+    # hip_contact = DoneTerm(
+    #     func=mdp.illegal_contact,
+    #     params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_hip"]), "threshold": 30.0},
+    # )
 
 
 # curriculum helper function
@@ -471,203 +463,69 @@ def ramp_value(env, env_ids, data, start, end, start_step, end_step):
 class UnitreeB2WZ1LBLocoManipCurriculumCfg():
     """Curriculum specifications for the MDP."""
 
-    ee_kp_track_w_500 = CurrTerm(
+    ee_kp_tracking_weight_600 = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
             "address": "rewards.ee_kp_tracking_delayed.weight",
-            "modify_fn": override_value,
-            "modify_params": {"value": 6.0, "num_steps": 12000},
+            "modify_fn": ramp_value,
+            "modify_params": {"start": 12.0, "end": 20.0, "start_step": 14400, "end_step": 48000},
         },
     )
 
-    ee_kp_track_std0_500 = CurrTerm(
+    ee_kp_track_std0_600 = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
             "address": "rewards.ee_kp_tracking_delayed.params.std0",
             "modify_fn": ramp_value,
-            "modify_params": {"start": 0.25, "end": 0.12, "start_step": 12000, "end_step": 24000},
+            "modify_params": {"start": 0.25, "end": 0.07, "start_step": 14400, "end_step": 48000},
         },
     )
 
-    ee_kp_track_std1_500 = CurrTerm(
+    ee_kp_track_std1_600 = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
             "address": "rewards.ee_kp_tracking_delayed.params.std1",
             "modify_fn": ramp_value,
-            "modify_params": {"start": 0.25, "end": 0.12, "start_step": 12000, "end_step": 24000},
+            "modify_params": {"start": 0.25, "end": 0.07, "start_step": 14400, "end_step": 48000},
         },
     )
 
-    ee_kp_track_std2_500 = CurrTerm(
+    ee_kp_track_std2_600 = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
             "address": "rewards.ee_kp_tracking_delayed.params.std2",
             "modify_fn": ramp_value,
-            "modify_params": {"start": 0.35, "end": 0.16, "start_step": 12000, "end_step": 24000},
+            "modify_params": {"start": 0.30, "end": 0.07, "start_step": 14400, "end_step": 48000},
         },
     )
 
-    ee_kp_ft_w_500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_finetune.weight",
-            "modify_fn": override_value,
-            "modify_params": {"value": 2.0, "num_steps": 12000},
-        },
-    )
-
-    ee_kp_ft_eps_500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_finetune.params.eps",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": 0.20, "end": 0.12, "start_step": 12000, "end_step": 24000},
-        },
-    )
-
-    base_vel_xy_800 = CurrTerm(
+    base_vel_xy_600 = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
             "address": "rewards.track_lin_vel_xy_exp.params.std",
-            "modify_fn": override_value,
-            "modify_params": {"value": 0.30, "num_steps": 19200},
+            "modify_fn": ramp_value,
+            "modify_params": {"start": 0.50, "end": 0.25, "start_step": 14400, "end_step": 48000},
         },
     )
 
-    base_vel_yaw_800 = CurrTerm(
+    base_vel_yaw_600 = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
             "address": "rewards.track_ang_vel_z_exp.params.std",
-            "modify_fn": override_value,
-            "modify_params": {"value": 0.30, "num_steps": 19200},
-        },
-    )
-
-    ee_kp_track_w_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_delayed.weight",
-            "modify_fn": override_value,
-            "modify_params": {"value": 9.0, "num_steps": 36000},
-        },
-    )
-
-    ee_kp_track_window_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_delayed.params.track_window_s",
-            "modify_fn": override_value,
-            "modify_params": {"value": 2.5, "num_steps": 36000},
-        },
-    )
-
-    ee_kp_track_std0_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_delayed.params.std0",
             "modify_fn": ramp_value,
-            "modify_params": {"start": 0.12, "end": 0.07, "start_step": 36000, "end_step": 72000},
+            "modify_params": {"start": 0.50, "end": 0.25, "start_step": 14400, "end_step": 48000},
         },
     )
 
-    ee_kp_track_std1_1500 = CurrTerm(
+    ee_progress_w_1000 = CurrTerm(
         func=mdp.modify_term_cfg,
         params={
-            "address": "rewards.ee_kp_tracking_delayed.params.std1",
+            "address": "rewards.ee_kp_progress.weight",
             "modify_fn": ramp_value,
-            "modify_params": {"start": 0.12, "end": 0.07, "start_step": 36000, "end_step": 72000},
+            "modify_params": {"start": 20.0, "end": 0.0, "start_step": 24000, "end_step": 48000},
         },
     )
 
-    ee_kp_track_std2_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_delayed.params.std2",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": 0.16, "end": 0.10, "start_step": 36000, "end_step": 72000},
-        },
-    )
-
-    ee_kp_ft_w_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_finetune.weight",
-            "modify_fn": override_value,
-            "modify_params": {"value": 3.5, "num_steps": 36000},
-        },
-    )
-
-    ee_kp_ft_eps_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_tracking_finetune.params.eps",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": 0.12, "end": 0.07, "start_step": 36000, "end_step": 72000},
-        },
-    )
-
-    flat_orientation_relax_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.flat_orientation_l2.weight",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": -1.0, "end": -0.4, "start_step": 36000, "end_step": 48000},
-        },
-    )
-
-    joint_pos_penalty_relax_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.joint_pos_penalty.weight",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": -0.3, "end": -0.12, "start_step": 36000, "end_step": 48000},
-        },
-    )
-
-    joint_mirror_relax_1500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.joint_mirror.weight",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": -0.025, "end": -0.0, "start_step": 36000, "end_step": 48000},
-        },
-    )
-
-    base_vel_xy_2000 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.track_lin_vel_xy_exp.params.std",
-            "modify_fn": override_value,
-            "modify_params": {"value": 0.25, "num_steps": 48000},
-        },
-    )
-
-    base_vel_yaw_2000 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.track_ang_vel_z_exp.params.std",
-            "modify_fn": override_value,
-            "modify_params": {"value": 0.25, "num_steps": 48000},
-        },
-    )
-    
-    ee_progress_w_2500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_progress_robust.weight",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": 75.0, "end": 0.0, "start_step": 60000, "end_step": 120000},
-        },
-    )
-
-    ee_progress_overshoot_w_2500 = CurrTerm(
-        func=mdp.modify_term_cfg,
-        params={
-            "address": "rewards.ee_kp_progress_robust.params.w_overshoot",
-            "modify_fn": ramp_value,
-            "modify_params": {"start": 0.20, "end": 0.10, "start_step": 60000, "end_step": 120000},
-        },
-    )
 
 @configclass
 class UnitreeB2WZ1LBLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
@@ -700,12 +558,6 @@ class UnitreeB2WZ1LBLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
     arm_joint_names = [
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
     ]
-    arm_joint1_names = [
-        "joint1",
-    ]
-    arm_joint_rest_names = [
-        "joint2", "joint3", "joint4", "joint5", "joint6",
-    ]
     gripper_joint_name = [
         "jointGripper",
     ]
@@ -728,16 +580,16 @@ class UnitreeB2WZ1LBLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
         # --- curriculum settings ---
 
         # --- observation settings ---
-        self.observations.policy.joint_pos.params["asset_cfg"].joint_names = self.leg_joint_names + self.arm_joint_names
-        self.observations.policy.joint_vel_legged_wheel.params["asset_cfg"].joint_names = self.leg_joint_names + self.wheel_joint_names
+        self.observations.policy.joint_pos_leg.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.observations.policy.joint_pos_arm.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.observations.policy.joint_vel_leg.params["asset_cfg"].joint_names = self.leg_joint_names
         self.observations.policy.joint_vel_arm.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.observations.policy.joint_vel_wheel.params["asset_cfg"].joint_names = self.wheel_joint_names
         self.observations.critic.joint_pos.params["asset_cfg"].joint_names = self.leg_joint_names + self.arm_joint_names
-        self.observations.critic.joint_vel.params["asset_cfg"].joint_names = self.leg_joint_names + self.wheel_joint_names + self.arm_joint_names
+        self.observations.critic.joint_vel.params["asset_cfg"].joint_names = self.leg_joint_names + self.arm_joint_names + self.wheel_joint_names
 
         # --- action settings ---
         self.actions.leg_joint_pos.joint_names = self.leg_joint_names
-        self.actions.arm_joint_pos_joint1.joint_names = self.arm_joint1_names
-        self.actions.arm_joint_pos_rest.joint_names = self.arm_joint_rest_names
         self.actions.joint_vel.joint_names = self.wheel_joint_names
 
         # --- command settings ---
@@ -746,8 +598,8 @@ class UnitreeB2WZ1LBLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
         # --- termination settings ---
 
         # --- event settings ---
-        self.events.physics_material.params["static_friction_range"] = (0.6, 1.0)
-        self.events.physics_material.params["dynamic_friction_range"] = (0.6, 1.0)
+        self.events.physics_material.params["static_friction_range"] = (0.6, 1.2)
+        self.events.physics_material.params["dynamic_friction_range"] = (0.6, 1.2)
         self.events.physics_material.params["restitution_range"] = (0.0, 0.2)
         self.events.add_base_mass.params["asset_cfg"].body_names = "base_link"
         self.events.add_base_mass.params["mass_distribution_params"] = (-5.0, 5.0)
@@ -765,27 +617,27 @@ class UnitreeB2WZ1LBLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
                 "x": (-0.5, 0.5),
                 "y": (-0.5, 0.5),
                 "z": (0.0, 0.2),
-                "roll": (-0.30, 0.30),
-                "pitch": (-0.30, 0.30),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
                 "yaw": (-3.14, 3.14)
             },
             "velocity_range": {
                 "x": (-0.5, 0.5),
                 "y": (-0.5, 0.5),
                 "z": (-0.5, 0.5),
-                "roll": (-0.3, 0.3),
-                "pitch": (-0.3, 0.3),
-                "yaw": (-0.3, 0.3),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-0.5, 0.5),
             },
         }
         self.events.push_robot.params = {
             "velocity_range": {
                 "x": (-0.5, 0.5),
                 "y": (-0.5, 0.5),
-                "z": (-0.0, 0.0),
-                "roll": (-0.3, 0.3),
-                "pitch": (-0.3, 0.3),
-                "yaw": (-0.3, 0.3)
+                "z": (-0.5, 0.5),
+                "roll": (-0.5, 0.5),
+                "pitch": (-0.5, 0.5),
+                "yaw": (-0.5, 0.5)
             }
         }
         self.events.reset_robot_joints.params = {
@@ -793,28 +645,29 @@ class UnitreeB2WZ1LBLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
         }
         self.events.reset_robot_joints.params["position_range"] = (0.8, 1.2)
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
+        self.events.reset_arm_joint_offset_joint.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=self.arm_joint_names)
 
         # --- reward settings ---
         # task rewards
-        self.rewards.track_lin_vel_xy_exp.weight = 3.30
-        self.rewards.track_ang_vel_z_exp.weight = 2.30
+        self.rewards.track_lin_vel_xy_exp.weight = 4.5
+        self.rewards.track_ang_vel_z_exp.weight = 2.0
 
         # root penalties
         self.rewards.lin_vel_z_l2.weight = -1.0
         self.rewards.ang_vel_xy_l2.weight = -0.10
-        self.rewards.flat_orientation_l2.weight = -1.0
+        self.rewards.flat_orientation_l2.weight = -2.0
 
         # leg joint penalties
-        self.rewards.dof_torques_l2.weight = -1.0e-05
+        self.rewards.dof_torques_l2.weight = -5.0e-06
         self.rewards.dof_torques_l2.params = {"asset_cfg": SceneEntityCfg("robot", joint_names=self.leg_joint_names)}
-        self.rewards.stand_still.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.dof_vel_l2.params = {"asset_cfg": SceneEntityCfg("robot", joint_names=self.leg_joint_names)}
         self.rewards.dof_acc_l2.weight = -2.5e-07
         self.rewards.dof_acc_l2.params = {"asset_cfg": SceneEntityCfg("robot", joint_names=self.leg_joint_names)}
         self.rewards.dof_pos_limits.weight = -3.0
         self.rewards.dof_pos_limits.params = {"asset_cfg": SceneEntityCfg("robot", joint_names=self.leg_joint_names)}
-        self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names + self.arm_joint_names
         self.rewards.joint_pos_penalty.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.rewards.stand_still.params["asset_cfg"].joint_names = self.leg_joint_names
 
         # arm joint penalties
         self.rewards.arm_dof_torques_l2.params["asset_cfg"].joint_names = self.arm_joint_names
@@ -832,7 +685,7 @@ class UnitreeB2WZ1LBLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # contact penalties
         self.rewards.undesired_contacts.weight = -1.0
-        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_thigh"), "threshold":1.0}
+        self.rewards.undesired_contacts.params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_thigh", ".*_hip"]), "threshold":1.0}
         
         # others
         self.rewards.feet_air_time.params["threshold"] = 0.6
@@ -848,14 +701,20 @@ class UnitreeB2WZ1LBLocoManipEnvCfg_PLAY(UnitreeB2WZ1LBLocoManipEnvCfg):
         # make a smaller scene for play
         self.scene.num_envs = 50
         self.scene.env_spacing = 2.5
-        # disable randomization for play
+
+        """
+        Adjustments for debugging
+        """
+        # disable observation corruption for play
         self.observations.policy.enable_corruption = False
-        # remove random pushing event
-        self.events.base_external_force_torque = None
-        self.events.push_robot = None 
-     
 
+        # special commands
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+
+        # remove events for play
+        self.events = None
         
-
-
-        
+        # disable curriculum for play
+        self.curriculum = None

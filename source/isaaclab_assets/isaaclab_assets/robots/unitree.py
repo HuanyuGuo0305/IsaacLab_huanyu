@@ -565,7 +565,7 @@ UNITREE_B2WZ1_CFG = ArticulationCfg(
             velocity_limit=23.0,
             stiffness=160.0,
             damping=5.0,
-            friction=0.0,
+            friction=0.01,
         ),
         "thigh": DCMotorCfg(
             joint_names_expr=[".*_thigh_joint"],
@@ -574,7 +574,7 @@ UNITREE_B2WZ1_CFG = ArticulationCfg(
             velocity_limit=23.0,
             stiffness=160.0,
             damping=5.0,
-            friction=0.0,
+            friction=0.01,
         ),
         "calf": DCMotorCfg(
             joint_names_expr=[".*_calf_joint"],
@@ -583,7 +583,7 @@ UNITREE_B2WZ1_CFG = ArticulationCfg(
             velocity_limit=14.0,
             stiffness=160.0,
             damping=5.0,
-            friction=0.0,
+            friction=0.01,
         ),
         "wheel": ImplicitActuatorCfg(
             joint_names_expr=[".*_foot_joint"],
@@ -591,16 +591,27 @@ UNITREE_B2WZ1_CFG = ArticulationCfg(
             velocity_limit_sim=50.0,
             stiffness=0.0,
             damping=10.0,
-            friction=0.0,
+            friction=0.01,
         ),
-        "z1_arm": DCMotorCfg(
-            joint_names_expr=["joint[1-6]", "jointGripper"],
+        "z1_arm_joint2": DCMotorCfg(
+            joint_names_expr=["joint2"],
+            effort_limit=60.0,
+            saturation_effort=60.0,
+            velocity_limit=3.0,
+            stiffness=40.0,
+            damping=3.0,
+            friction=0.01,
+            armature=0.01,
+        ),
+        "z1_arm_rest": DCMotorCfg(
+            joint_names_expr=["joint1", "joint3", "joint4", "joint5", "joint6", "jointGripper"],
             effort_limit=30.0,
             saturation_effort=30.0,
             velocity_limit=3.0,
-            stiffness=50.0,
-            damping=1.5,
-            friction=0.0,
+            stiffness=40.0,
+            damping=3.0,
+            friction=0.01,
+            armature=0.01,
         )
     },
 )

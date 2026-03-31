@@ -306,15 +306,38 @@ def action_rate_l2_wheel(env):
 
 def action_rate_l2_arm(env):
     """Convenience wrapper: arm."""
-    return action_rate_l2_by_terms(env, ["arm_joint_pos"])
+    return action_rate_l2_by_terms(env, ["arm_joint_pos_1", "arm_joint_pos_2", "arm_joint_pos_345", "arm_joint_pos_6"])
 
-def action_rate_l2_arm_joint1(env):
-    """Convenience wrapper: arm joint 1."""
-    return action_rate_l2_by_terms(env, ["arm_joint_pos_joint1"])
+def action_l2_by_terms(env, term_names):
+    """L2 penalty on absolute action magnitude for selected action terms."""
+    if isinstance(term_names, str):
+        term_names = [term_names]
 
-def action_rate_l2_arm_joint_rest(env):
-    """Convenience wrapper: arm joints except joint 1."""
-    return action_rate_l2_by_terms(env, ["arm_joint_pos_rest"])
+    a = env.action_manager.action  # (num_envs, total_dim)
+
+    sel = _action_term_slices(env, term_names)
+
+    out = 0.0
+    for sl in sel:
+        out = out + torch.sum(torch.square(a[:, sl]), dim=1)
+
+    return out
+
+
+def action_l2_arm(env):
+    """Convenience wrapper: arm action magnitude penalty."""
+    return action_l2_by_terms(
+        env,
+        ["arm_joint_pos_1", "arm_joint_pos_2", "arm_joint_pos_345", "arm_joint_pos_6"],
+    )
+
+def action_l2_leg(env):
+    """Convenience wrapper: leg action magnitude penalty."""
+    return action_l2_by_terms(env, ["leg_joint_pos"])
+
+def action_l2_wheel(env):
+    """Convenience wrapper: wheel action magnitude penalty."""
+    return action_l2_by_terms(env, ["joint_vel"])
 
 
 """
@@ -421,6 +444,45 @@ def joint_pos_penalty(env: ManagerBasedRLEnv, command_name: str, asset_cfg: Scen
         stand_still_scale * running_reward,
     )
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
+def joint_pos_penalty_smooth(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    stand_still_scale: float,
+    velocity_threshold: float,
+    command_threshold: float,
+    transition_width: float = 0.10,
+) -> torch.Tensor:
+    """Smooth joint position deviation penalty.
+
+    - Near stand-still: stronger penalty
+    - During motion: weaker penalty
+    - Smoothly interpolates between the two regimes
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)          # (N,)
+    body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)                  # (N,)
+
+    joint_dev = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    running_penalty = torch.linalg.norm(joint_dev, dim=1)                                   # (N,)
+
+    # smooth activation: 0 means stand-still, 1 means moving
+    cmd_alpha = torch.clamp((cmd - command_threshold) / max(transition_width, 1e-6), 0.0, 1.0)
+    vel_alpha = torch.clamp((body_vel - velocity_threshold) / max(transition_width, 1e-6), 0.0, 1.0)
+
+    moving_alpha = torch.maximum(cmd_alpha, vel_alpha)
+
+    # stand-still scale -> 1.0 smoothly
+    penalty_scale = stand_still_scale * (1.0 - moving_alpha) + 1.0 * moving_alpha
+    reward = penalty_scale * running_penalty
+
+    posture_scale = torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0.0, 0.7) / 0.7
+    reward = reward * posture_scale
+
     return reward
 
 
