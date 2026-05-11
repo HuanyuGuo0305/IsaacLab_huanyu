@@ -15,6 +15,7 @@ import torch
 from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation, RigidObject
+from isaaclab.envs.mdp.observations import ee_current_kp
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers.manager_base import ManagerTermBase
 from isaaclab.managers.manager_term_cfg import RewardTermCfg
@@ -88,6 +89,14 @@ def ang_vel_xy_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntit
     return torch.sum(torch.square(asset.data.root_ang_vel_b[:, :2]), dim=1)
 
 
+def ang_vel_x_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize x-axis (roll) base angular velocity using L2 squared kernel."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+
+    ang_vel_x = asset.data.root_ang_vel_b[:, 0:1]  
+    return torch.sum(torch.square(ang_vel_x), dim=1)
+
+
 def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize non-flat base orientation using L2 squared kernel.
 
@@ -127,6 +136,31 @@ def body_lin_acc_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEnt
     """Penalize the linear acceleration of bodies using L2-kernel."""
     asset: Articulation = env.scene[asset_cfg.name]
     return torch.sum(torch.norm(asset.data.body_lin_acc_w[:, asset_cfg.body_ids, :], dim=-1), dim=1)
+
+
+def base_xy_vel_stand_still_l2(
+    env,
+    command_name: str,
+    command_threshold: float = 0.06,
+    transition_width: float = 0.03,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    asset = env.scene[asset_cfg.name]
+
+    command = env.command_manager.get_command(command_name)
+    cmd_norm = torch.norm(command[:, :2], dim=1)
+
+    base_xy_vel = torch.sum(torch.square(asset.data.root_lin_vel_b[:, :2]), dim=1)
+
+    lower = command_threshold - transition_width
+    upper = command_threshold + transition_width
+
+    x = (cmd_norm - lower) / max(upper - lower, 1e-6)
+    x = torch.clamp(x, 0.0, 1.0)
+    smooth = x * x * (3.0 - 2.0 * x)
+
+    stand_weight = 1.0 - smooth
+    return base_xy_vel * stand_weight
 
 
 """
@@ -195,6 +229,47 @@ def joint_pos_limits(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEn
         asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, 1]
     ).clip(min=0.0)
     return torch.sum(out_of_limits, dim=1)
+
+
+def joint_pos_soft_limit_margin(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    margin_ratio: float = 0.15,
+    power: float = 2.0,
+) -> torch.Tensor:
+    """Penalize joints when approaching soft position limits.
+
+    The penalty is zero in the interior safe region and increases smoothly
+    inside a margin near the lower/upper soft limits.
+
+    Args:
+        margin_ratio: Fraction of the soft joint range used as warning margin
+            on each side. For example, 0.15 means the outermost 15% near each
+            limit is penalized.
+        power: Exponent for shaping. 2.0 gives quadratic growth.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    q = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    q_min = asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, 0]
+    q_max = asset.data.soft_joint_pos_limits[:, asset_cfg.joint_ids, 1]
+
+    q_range = (q_max - q_min).clamp_min(1e-6)
+    margin = margin_ratio * q_range
+
+    # distance to each soft limit
+    dist_to_min = q - q_min
+    dist_to_max = q_max - q
+
+    # normalized warning-zone violation
+    # inside safe region -> 0
+    # at limit -> 1
+    # beyond limit -> >1
+    lower_violation = ((margin - dist_to_min) / margin.clamp_min(1e-6)).clip(min=0.0)
+    upper_violation = ((margin - dist_to_max) / margin.clamp_min(1e-6)).clip(min=0.0)
+
+    penalty = lower_violation.pow(power) + upper_violation.pow(power)
+    return torch.sum(penalty, dim=1)
 
 
 def joint_vel_limits(
@@ -306,7 +381,7 @@ def action_rate_l2_wheel(env):
 
 def action_rate_l2_arm(env):
     """Convenience wrapper: arm."""
-    return action_rate_l2_by_terms(env, ["arm_joint_pos_1", "arm_joint_pos_2", "arm_joint_pos_345", "arm_joint_pos_6"])
+    return action_rate_l2_by_terms(env, ["arm_joint_pos"])
 
 def action_l2_by_terms(env, term_names):
     """L2 penalty on absolute action magnitude for selected action terms."""
@@ -328,7 +403,7 @@ def action_l2_arm(env):
     """Convenience wrapper: arm action magnitude penalty."""
     return action_l2_by_terms(
         env,
-        ["arm_joint_pos_1", "arm_joint_pos_2", "arm_joint_pos_345", "arm_joint_pos_6"],
+        ["arm_joint_pos"],
     )
 
 def action_l2_leg(env):
@@ -447,42 +522,47 @@ def joint_pos_penalty(env: ManagerBasedRLEnv, command_name: str, asset_cfg: Scen
     return reward
 
 
-def joint_pos_penalty_smooth(
+def joint_pos_penalty_weighted(
     env: ManagerBasedRLEnv,
     command_name: str,
     asset_cfg: SceneEntityCfg,
     stand_still_scale: float,
     velocity_threshold: float,
     command_threshold: float,
-    transition_width: float = 0.10,
+    front_thigh_calf_scale: float = 0.25,
+    other_joint_scale: float = 1.0,
 ) -> torch.Tensor:
-    """Smooth joint position deviation penalty.
-
-    - Near stand-still: stronger penalty
-    - During motion: weaker penalty
-    - Smoothly interpolates between the two regimes
-    """
     asset: Articulation = env.scene[asset_cfg.name]
 
-    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)          # (N,)
-    body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)                  # (N,)
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
 
-    joint_dev = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
-    running_penalty = torch.linalg.norm(joint_dev, dim=1)                                   # (N,)
+    q = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    q_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    diff = q - q_default
 
-    # smooth activation: 0 means stand-still, 1 means moving
-    cmd_alpha = torch.clamp((cmd - command_threshold) / max(transition_width, 1e-6), 0.0, 1.0)
-    vel_alpha = torch.clamp((body_vel - velocity_threshold) / max(transition_width, 1e-6), 0.0, 1.0)
+    joint_names = [asset.joint_names[i] for i in asset_cfg.joint_ids]
 
-    moving_alpha = torch.maximum(cmd_alpha, vel_alpha)
+    weights = torch.ones(len(joint_names), device=diff.device, dtype=diff.dtype) * float(other_joint_scale)
 
-    # stand-still scale -> 1.0 smoothly
-    penalty_scale = stand_still_scale * (1.0 - moving_alpha) + 1.0 * moving_alpha
-    reward = penalty_scale * running_penalty
+    for j, name in enumerate(joint_names):
+        if name in [
+            "FL_thigh_joint",
+            "FR_thigh_joint",
+            "FL_calf_joint",
+            "FR_calf_joint",
+        ]:
+            weights[j] = float(front_thigh_calf_scale)
 
-    posture_scale = torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0.0, 0.7) / 0.7
-    reward = reward * posture_scale
+    running_reward = torch.linalg.norm(diff * weights.unsqueeze(0), dim=1)
 
+    reward = torch.where(
+        torch.logical_or(cmd > command_threshold, body_vel > velocity_threshold),
+        running_reward,
+        stand_still_scale * running_reward,
+    )
+
+    reward *= torch.clamp(-asset.data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 
 
@@ -714,59 +794,102 @@ def energy(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("r
     return torch.sum(torch.abs(qvel) * torch.abs(qfrc), dim=-1)
 
 
-def ee_jitter_lin_vel_l2_delayed(
-    env,
-    command_name: str,
-    asset_cfg,
-    track_window_s: float = 4.0,
-    frame: str = "b",   # "w" - world, "b" - base
-    axes: str = "xyz",  # "xyz" / "xy" / "z"
-    eps: float = 1e-6,
-) -> torch.Tensor:
-    """EE jitter penalty: penalize EE linear velocity (L2) only in last 'track_window_s' seconds of each command cycle.
+"""
+End-effector penalties and rewards.
+"""
 
-    Returns a positive penalty value.
-    """
-    asset = env.scene[asset_cfg.name]
+# helpers
 
-    # delayed mask from CommandTerm.time_left
-    cmd_term = env.command_manager.get_term(command_name)
-    time_left = cmd_term.time_left  # (N,)
-    in_window = time_left <= float(track_window_s)
-
-    # average over last window
-    window_scale = 1.0 / max(float(track_window_s), eps)
-
-    # EE linear velocity
+def _resolve_body_id(asset_cfg: SceneEntityCfg) -> int:
+    """Resolve a single body id from SceneEntityCfg."""
     body_id = asset_cfg.body_ids[0]
     if isinstance(body_id, (list, tuple)):
         body_id = body_id[0]
-    body_id = int(body_id)
+    return int(body_id)
 
-    v_w = asset.data.body_lin_vel_w[:, body_id, :]  # (N,3)
 
-    if frame == "w":
-        v = v_w
-    elif frame == "b":
-        # world -> base frame
-        v = math_utils.quat_apply_inverse(asset.data.root_quat_w, v_w)
-    else:
-        raise ValueError(f"[ee_jitter_lin_vel_l2_delayed] Unsupported frame: {frame}. Use 'w' or 'b'.")
+def _select_axes(vec: torch.Tensor, axes: str) -> torch.Tensor:
+    """Select requested axes from a (..., 3) tensor."""
+    axes = axes.lower()
 
     if axes == "xyz":
-        vv = v
+        return vec
     elif axes == "xy":
-        vv = v[:, :2]
+        return vec[..., :2]
+    elif axes == "xz":
+        return vec[..., [0, 2]]
+    elif axes == "yz":
+        return vec[..., 1:]
+    elif axes == "x":
+        return vec[..., 0:1]
+    elif axes == "y":
+        return vec[..., 1:2]
     elif axes == "z":
-        vv = v[:, 2:3]
+        return vec[..., 2:3]
     else:
-        raise ValueError(f"[ee_jitter_lin_vel_l2_delayed] Unsupported axes: {axes}. Use 'xyz'/'xy'/'z'.")
+        raise ValueError(f"Unsupported axes='{axes}'. Use xyz/xy/xz/yz/x/y/z.")
+    
 
-    vel_l2 = torch.sum(vv * vv, dim=1)  # (N,)
+def ee_lin_vel_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    frame: str = "w",
+    axes: str = "xyz",
+) -> torch.Tensor:
+    """Penalize end-effector linear velocity using L2 squared kernel.
 
-    # delayed + window average
-    out = torch.where(in_window, vel_l2 * window_scale, torch.zeros_like(vel_l2))
-    return out
+    Args:
+        frame:
+            "w": world frame
+            "b": base frame
+        axes:
+            "xyz", "xy", "xz", "yz", "x", "y", "z"
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    body_id = _resolve_body_id(asset_cfg)
+
+    vel_w = asset.data.body_lin_vel_w[:, body_id, :]  # (N, 3)
+
+    if frame == "w":
+        vel = vel_w
+    elif frame == "b":
+        vel = math_utils.quat_apply_inverse(asset.data.root_quat_w, vel_w)
+    else:
+        raise ValueError(f"[ee_lin_vel_l2] Unsupported frame: {frame}. Use 'w' or 'b'.")
+
+    vel = _select_axes(vel, axes)
+    return torch.sum(torch.square(vel), dim=1)
+
+
+def ee_ang_vel_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    frame: str = "w",
+    axes: str = "xyz",
+) -> torch.Tensor:
+    """Penalize end-effector angular velocity using L2 squared kernel.
+
+    Args:
+        frame:
+            "w": world frame
+            "b": base frame
+        axes:
+            "xyz", "xy", "xz", "yz", "x", "y", "z"
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    body_id = _resolve_body_id(asset_cfg)
+
+    ang_vel_w = asset.data.body_ang_vel_w[:, body_id, :]  # (N, 3)
+
+    if frame == "w":
+        ang_vel = ang_vel_w
+    elif frame == "b":
+        ang_vel = math_utils.quat_apply_inverse(asset.data.root_quat_w, ang_vel_w)
+    else:
+        raise ValueError(f"[ee_ang_vel_l2] Unsupported frame: {frame}. Use 'w' or 'b'.")
+
+    ang_vel = _select_axes(ang_vel, axes)
+    return torch.sum(torch.square(ang_vel), dim=1)
 
 
 def ee_lin_acc_l2(
@@ -775,137 +898,53 @@ def ee_lin_acc_l2(
     frame: str = "w",
     axes: str = "xyz",
 ) -> torch.Tensor:
-    """Penalize end-effector linear acceleration (anti-jerk)."""
-    asset: Articulation = env.scene[asset_cfg.name]
-    a_w = asset.data.body_lin_acc_w[:, asset_cfg.body_ids[0], :]
+    """Penalize end-effector linear acceleration using L2 squared kernel.
 
-    if frame == "b":
-        a = math_utils.quat_apply_inverse(asset.data.root_quat_w, a_w)
-    else:
-        a = a_w
-
-    if axes == "xy":
-        a = a[:, :2]
-    elif axes == "z":
-        a = a[:, 2:3]
-
-    return torch.sum(torch.square(a), dim=1)
-
-
-def ee_jitter_lin_vel_change_l2_delayed(
-    env,
-    asset_cfg,
-    command_name: str,
-    track_window_s: float = 4.0,
-    frame: str = "b",          # "b" - base frame / "w" - world frame
-    axes: str = "xyz",         # "x", "yz", "xyz" etc. to select axes to penalize
-    clip_max: float | None = 2.0,
-    eps: float = 1e-6,
-) -> torch.Tensor:
-    """Penalize high-frequency end-effector jitter AFTER reaching (delayed window).
-
-    This penalizes squared change in EE linear velocity.
-    The penalty is only active in the last 'track_window_s' seconds of each command cycle.
-
-    Args:
-        track_window_s: only active when time_left <= track_window_s.
-        clip_max: optional clamp on dv components for robustness.
+    This is an anti-jerk style term. Stronger than velocity penalty.
     """
-    asset = env.scene[asset_cfg.name]
-    body_id = asset_cfg.body_ids[0]
-    if isinstance(body_id, (list, tuple)):
-        body_id = body_id[0]
-    body_id = int(body_id)
+    asset: Articulation = env.scene[asset_cfg.name]
+    body_id = _resolve_body_id(asset_cfg)
 
-    # delayed mask
-    cmd_term = env.command_manager.get_term(command_name)
-    time_left = cmd_term.time_left  # (N,)
-    in_window = time_left <= float(track_window_s)
-    window_scale = 1.0 / max(float(track_window_s), eps)
+    acc_w = asset.data.body_lin_acc_w[:, body_id, :]  # (N, 3)
 
-    # current EE linear velocity
-    # world-frame EE linear velocity
-    v_w = asset.data.body_lin_vel_w[:, body_id, :]  # (N,3)
-
-    if frame.lower() == "w":
-        v = v_w
-    elif frame.lower() == "b":
-        # transform world vel -> base frame using base orientation
-        # base quat is root_quat_w (wxyz). We apply inverse rotation.
-        v = math_utils.quat_apply_inverse(asset.data.root_quat_w, v_w)
+    if frame == "w":
+        acc = acc_w
+    elif frame == "b":
+        acc = math_utils.quat_apply_inverse(asset.data.root_quat_w, acc_w)
     else:
-        raise ValueError(f"[ee_jitter_lin_vel_change_l2_delayed] frame must be 'b' or 'w', got: {frame}")
+        raise ValueError(f"[ee_lin_acc_l2] Unsupported frame: {frame}. Use 'w' or 'b'.")
 
-    # axes mask
-    ax = axes.lower()
-    idx = []
-    if "x" in ax:
-        idx.append(0)
-    if "y" in ax:
-        idx.append(1)
-    if "z" in ax:
-        idx.append(2)
-    if len(idx) == 0:
-        raise ValueError(f"[ee_jitter_lin_vel_change_l2_delayed] invalid axes='{axes}'")
-    v = v[:, idx]  # (N, len(idx))
-
-    # cache previous velocity & compute dv
-    # cache name includes body + frame + axes to avoid collisions if you create multiple terms
-    cache_key = f"_ee_prev_lin_vel_{asset_cfg.name}_{body_id}_{frame}_{axes}"
-    if not hasattr(env, cache_key):
-        setattr(env, cache_key, v.clone())
-
-    v_prev = getattr(env, cache_key)  # (N, len(idx))
-
-    # Optional: if the env exposes reset buffer, clear prev vel on resets to avoid spikes
-    # This is a safe best-effort; different IsaacLab versions may differ.
-    if hasattr(env, "reset_buf"):
-        reset = env.reset_buf.bool()
-        if reset.any():
-            v_prev = v_prev.clone()
-            v_prev[reset] = v[reset]
-
-    dv = v - v_prev  # (N, len(idx))
-
-    # robustness clamp
-    if clip_max is not None:
-        dv = dv.clamp(min=-float(clip_max), max=float(clip_max))
-
-    # update cache AFTER computing dv
-    setattr(env, cache_key, v.detach())
-
-    # L2 penalty on dv
-    jitter = torch.sum(dv * dv, dim=1)  # (N,)
-
-    # only active in last window + window average
-    jitter = torch.where(in_window, jitter * window_scale, torch.zeros_like(jitter))
-    return jitter
+    acc = _select_axes(acc, axes)
+    return torch.sum(torch.square(acc), dim=1)
 
 
-def joint_acc_l2_delayed(
+def ee_ang_acc_l2(
     env: ManagerBasedRLEnv,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    command_name: str = "ee_kp",
-    track_window_s: float = 4.0,
-    eps: float = 1e-6,
+    asset_cfg: SceneEntityCfg,
+    frame: str = "w",
+    axes: str = "xyz",
 ) -> torch.Tensor:
-    """Delayed joint-acc penalty: only active in last `track_window_s` seconds of each command cycle.
+    """Penalize end-effector angular acceleration using L2 squared kernel.
 
-    Returns a *positive* penalty value. In cfg, set weight negative to penalize.
-    NOTE: Only joints in `asset_cfg.joint_ids` contribute (same as joint_acc_l2).
+    Only use this if your articulation data exposes body_ang_acc_w.
     """
     asset: Articulation = env.scene[asset_cfg.name]
+    body_id = _resolve_body_id(asset_cfg)
 
-    # -------- delayed mask from CommandTerm.time_left --------
-    cmd_term = env.command_manager.get_term(command_name)
-    time_left = cmd_term.time_left  # (N,)
-    in_window = time_left <= float(track_window_s)
+    if not hasattr(asset.data, "body_ang_acc_w"):
+        raise AttributeError(
+            "[ee_ang_acc_l2] asset.data has no attribute 'body_ang_acc_w'. "
+            "Use ee_lin_acc_l2 / ee_ang_vel_l2 instead."
+        )
 
-    # average over last window (dt multiplied outside by manager, so normalize here)
-    window_scale = 1.0 / max(float(track_window_s), eps)
+    acc_w = asset.data.body_ang_acc_w[:, body_id, :]  # (N, 3)
 
-    acc_l2 = torch.sum(torch.square(asset.data.joint_acc[:, asset_cfg.joint_ids]), dim=1)  # (N,)
+    if frame == "w":
+        acc = acc_w
+    elif frame == "b":
+        acc = math_utils.quat_apply_inverse(asset.data.root_quat_w, acc_w)
+    else:
+        raise ValueError(f"[ee_ang_acc_l2] Unsupported frame: {frame}. Use 'w' or 'b'.")
 
-    # delayed + window average
-    out = torch.where(in_window, acc_l2 * window_scale, torch.zeros_like(acc_l2))
-    return out
+    acc = _select_axes(acc, axes)
+    return torch.sum(torch.square(acc), dim=1)

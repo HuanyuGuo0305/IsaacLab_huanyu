@@ -147,3 +147,48 @@ def stand_still_joint_deviation_l1_smooth(
     weight = 1.0 - smooth
 
     return deviation * weight
+
+
+def stand_still_joint_deviation_l1_smooth_weighted(
+    env,
+    command_name: str,
+    command_threshold: float = 0.06,
+    transition_width: float = 0.03,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    front_thigh_calf_scale: float = 0.25,
+    other_joint_scale: float = 1.0,
+) -> torch.Tensor:
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    command = env.command_manager.get_command(command_name)
+    cmd_norm = torch.norm(command[:, :2], dim=1)
+
+    q = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    q_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    diff = torch.abs(q - q_default)
+
+    joint_names = [asset.joint_names[i] for i in asset_cfg.joint_ids]
+
+    weights = torch.ones(len(joint_names), device=diff.device, dtype=diff.dtype) * float(other_joint_scale)
+
+    for j, name in enumerate(joint_names):
+        if name in [
+            "FL_thigh_joint",
+            "FR_thigh_joint",
+            "FL_calf_joint",
+            "FR_calf_joint",
+        ]:
+            weights[j] = float(front_thigh_calf_scale)
+
+    deviation = torch.sum(diff * weights.unsqueeze(0), dim=1)
+
+    lower = command_threshold - transition_width
+    upper = command_threshold + transition_width
+
+    x = (cmd_norm - lower) / max(upper - lower, 1e-6)
+    x = torch.clamp(x, 0.0, 1.0)
+
+    smooth = x * x * (3.0 - 2.0 * x)
+    weight = 1.0 - smooth
+
+    return deviation * weight

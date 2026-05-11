@@ -689,6 +689,57 @@ def remaining_time_s(env: ManagerBasedRLEnv) -> torch.Tensor:
     return env.max_episode_length_s - env.episode_length_buf.unsqueeze(1) * env.step_dt
 
 
+def episode_progress(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Episode progress ratio in [0, 1]. Shape: (num_envs, 1)."""
+    progress = env.episode_length_buf.float().unsqueeze(-1) / float(env.max_episode_length)
+    return torch.clamp(progress, 0.0, 1.0)
+
+
+def command_time_s(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
+    """Elapsed time since the command was resampled, in seconds. Shape: (num_envs, 1)."""
+    cmd_term = env.command_manager.get_term(command_name)
+
+    if hasattr(cmd_term, "time_left"):
+        return cmd_term.time_left.new_full((env.num_envs, 1), 0.0)  # fallback below preferred
+
+    # Most custom command terms usually store one of these.
+    for name in ("time_since_resampling", "_time_since_resampling", "elapsed_time", "_elapsed_time"):
+        if hasattr(cmd_term, name):
+            value = getattr(cmd_term, name)
+            return value.unsqueeze(-1)
+
+    raise AttributeError(
+        f"Command term '{command_name}' has no known elapsed-time buffer. "
+        "Expose it in the command term, or use command_phase_from_time_left()."
+    )
+
+
+def command_phase_from_time_left(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    resampling_time: float,
+) -> torch.Tensor:
+    """Command phase ratio in [0, 1]. Shape: (num_envs, 1).
+
+    0 means just sampled, 1 means about to resample.
+    """
+    cmd_term = env.command_manager.get_term(command_name)
+
+    # Isaac Lab command terms commonly keep remaining time in `_time_left`.
+    if hasattr(cmd_term, "_time_left"):
+        time_left = cmd_term._time_left
+    elif hasattr(cmd_term, "time_left"):
+        time_left = cmd_term.time_left
+    else:
+        raise AttributeError(
+            f"Command term '{command_name}' has no `_time_left` / `time_left`. "
+            "Add a public buffer in your command term."
+        )
+
+    phase = 1.0 - time_left.float().unsqueeze(-1) / float(resampling_time)
+    return torch.clamp(phase, 0.0, 1.0)
+
+
 """
 End-effector state.
 """
@@ -754,3 +805,124 @@ def ee_current_kp(
         return torch.cat([kp0, kp1, kp2], dim=-1)
 
     raise ValueError(f"[ee_current_kp] Unknown frame='{frame}'. Use 'lb'.")
+
+
+@generic_io_descriptor(
+    dtype=torch.float32,
+    observation_type="EndEffectorKeypointError",
+    on_inspect=[record_shape, record_dtype, record_body_names],
+)
+def ee_kp_error(
+    env: ManagerBasedEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    kp_dx: float = 0.30,
+    kp_dz: float = 0.30,
+    frame: str = "lb",
+    make_quat_unique: bool = True,
+) -> torch.Tensor:
+    """End-effector keypoint tracking error: command - current.
+
+    Returns:
+        Tensor of shape (num_envs, 9): [kp0_err(3), kp1_err(3), kp2_err(3)]
+
+    Notes:
+        - This assumes the command term `command_name` outputs EE keypoints in the same frame.
+        - For your current setup, `ee_kp` is already in LB frame, so use frame="lb".
+    """
+    # current EE keypoints in selected frame
+    kps_cur = ee_current_kp(
+        env,
+        asset_cfg=asset_cfg,
+        kp_dx=kp_dx,
+        kp_dz=kp_dz,
+        frame=frame,
+        make_quat_unique=make_quat_unique,
+    )  # (N, 9)
+
+    # commanded EE keypoints
+    kps_cmd = env.command_manager.get_command(command_name)  # (N, 9)
+
+    if kps_cmd.shape[-1] != 9:
+        raise ValueError(
+            f"[ee_kp_error] Expected command '{command_name}' to have shape (N, 9), got {tuple(kps_cmd.shape)}."
+        )
+
+    return kps_cmd - kps_cur
+
+
+@generic_io_descriptor(
+    dtype=torch.float32,
+    observation_type="EndEffectorKeypointError",
+    on_inspect=[record_shape, record_dtype, record_body_names],
+)
+def ee_kp_error_plb(
+    env: ManagerBasedEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    kp_dx: float = 0.30,
+    kp_dz: float = 0.30,
+    ground_z: float = 0.0,
+    make_quat_unique: bool = True,
+) -> torch.Tensor:
+    """End-effector keypoint tracking error in Projected Level-Base frame.
+
+    PLB frame:
+      - origin = [base_x, base_y, ground_z]
+      - orientation = yaw-only(base_quat)
+
+    Returns:
+        command_kps_plb - current_kps_plb, shape (num_envs, 9)
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    ee_id = asset_cfg.body_ids[0]  # type: ignore
+
+    # EE pose in world
+    ee_pos_w = asset.data.body_pos_w[:, ee_id]
+    ee_quat_w = asset.data.body_quat_w[:, ee_id]
+
+    # Base pose in world
+    base_pos_w = asset.data.root_pos_w
+    base_quat_w = asset.data.root_quat_w
+
+    if make_quat_unique:
+        ee_quat_w = math_utils.quat_unique(ee_quat_w)
+        base_quat_w = math_utils.quat_unique(base_quat_w)
+
+    # PLB frame in world
+    _, _, yaw = math_utils.euler_xyz_from_quat(base_quat_w)
+    zeros = torch.zeros_like(yaw)
+
+    plb_quat_w = math_utils.quat_from_euler_xyz(zeros, zeros, yaw)
+    plb_quat_inv = math_utils.quat_conjugate(plb_quat_w)
+
+    plb_pos_w = base_pos_w.clone()
+    plb_pos_w[:, 2] = float(ground_z)
+
+    # EE pose in PLB
+    ee_pos_plb = math_utils.quat_apply_inverse(plb_quat_w, ee_pos_w - plb_pos_w)
+    ee_quat_plb = math_utils.quat_mul(plb_quat_inv, ee_quat_w)
+
+    if make_quat_unique:
+        ee_quat_plb = math_utils.quat_unique(ee_quat_plb)
+
+    # Current EE keypoints in PLB
+    off_x = ee_pos_w.new_tensor([kp_dx, 0.0, 0.0]).unsqueeze(0).expand_as(ee_pos_w)
+    off_z = ee_pos_w.new_tensor([0.0, 0.0, kp_dz]).unsqueeze(0).expand_as(ee_pos_w)
+
+    kp0_cur = ee_pos_plb
+    kp1_cur = ee_pos_plb + math_utils.quat_apply(ee_quat_plb, off_x)
+    kp2_cur = ee_pos_plb + math_utils.quat_apply(ee_quat_plb, off_z)
+
+    kps_cur = torch.cat([kp0_cur, kp1_cur, kp2_cur], dim=-1)
+
+    # Command keypoints are already in PLB
+    kps_cmd = env.command_manager.get_command(command_name)
+
+    if kps_cmd.shape[-1] != 9:
+        raise ValueError(
+            f"[ee_kp_error_plb] Expected command '{command_name}' to have shape (N, 9), "
+            f"got {tuple(kps_cmd.shape)}."
+        )
+
+    return kps_cmd - kps_cur

@@ -59,6 +59,26 @@ class JointPositionActionCfg(JointActionCfg):
 
 
 @configclass
+class DelayedJointPositionActionCfg(JointActionCfg):
+    """Configuration for delayed joint position action term.
+
+    This behaves like JointPositionAction, but the processed joint-position
+    targets are applied after a sampled delay (in physics/control steps).
+    """
+
+    class_type: type[ActionTerm] = joint_actions.DelayedJointPositionAction
+
+    use_default_offset: bool = True
+    """Whether to use default joint positions configured in the articulation asset as offset."""
+
+    min_delay: int = 0
+    """Minimum integer delay in steps."""
+
+    max_delay: int = 0
+    """Maximum integer delay in steps."""
+
+
+@configclass
 class RelativeJointPositionActionCfg(JointActionCfg):
     """Configuration for the relative joint position action term.
 

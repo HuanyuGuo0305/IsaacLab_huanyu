@@ -80,6 +80,68 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
+def _to_cpu_numpy(x):
+    """Convert tensor-like data to CPU numpy for printing."""
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return x
+
+
+def print_first_env_actor_io(obs, actions, step, start_step=5, end_step=10):
+    """Print only the first environment's actor input and output."""
+    if step < start_step or step > end_step:
+        return
+
+    print(f"\n================ ACTOR DEBUG STEP {step} ================")
+
+    # only cares about actor obs
+    if isinstance(obs, dict):
+        print("[ACTOR OBS] dict keys:", list(obs.keys()))
+        for k, v in obs.items():
+            key_str = str(k).lower()
+            if key_str in ["critic", "states", "privileged_obs", "critic_obs"]:
+                continue
+            v_np = _to_cpu_numpy(v)
+            if hasattr(v_np, "shape"):
+                print(f"[ACTOR OBS] {k}: shape={v_np.shape}")
+                if len(v_np.shape) >= 1:
+                    print(f"[ACTOR OBS] {k}[0] = {v_np[0]}")
+            else:
+                print(f"[ACTOR OBS] {k} = {v_np}")
+
+    elif isinstance(obs, TensorDictBase):
+        print("[ACTOR OBS] tensordict keys:", list(obs.keys()))
+        for k in obs.keys():
+            key_str = str(k).lower()
+            if key_str in ["critic", "states", "privileged_obs", "critic_obs"]:
+                continue
+            v = obs[k]
+            v_np = _to_cpu_numpy(v)
+            if hasattr(v_np, "shape"):
+                print(f"[ACTOR OBS] {k}: shape={v_np.shape}")
+                if len(v_np.shape) >= 1:
+                    print(f"[ACTOR OBS] {k}[0] = {v_np[0]}")
+            else:
+                print(f"[ACTOR OBS] {k} = {v_np}")
+
+    else:
+        obs_np = _to_cpu_numpy(obs)
+        if hasattr(obs_np, "shape"):
+            print(f"[ACTOR OBS] shape = {obs_np.shape}")
+            print(f"[ACTOR OBS] first env = {obs_np[0]}")
+        else:
+            print(f"[ACTOR OBS] = {obs_np}")
+
+    # only print actor output action
+    act_np = _to_cpu_numpy(actions)
+    if hasattr(act_np, "shape"):
+        print(f"[ACTOR ACT] shape = {act_np.shape}")
+        print(f"[ACTOR ACT] first env = {act_np[0]}")
+    else:
+        print(f"[ACTOR ACT] = {act_np}")
+
+    print("=========================================================\n")
+
 
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
@@ -178,11 +240,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # reset environment
     obs = env.get_observations()
     timestep = 0
+    debug_step = 0
 
     # Get the joints' order for sim2sim deployment
-    # Access the underlying isaac env
-
-    # Acess the articulation (robot) object
     isaac_env = env.unwrapped
     robot = None
     if hasattr(isaac_env.scene, "articulations"):
@@ -205,52 +265,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
+
+            # debug: print actor obs/action for env0 on steps 5~10
+            try:
+                print_first_env_actor_io(obs, actions, debug_step, start_step=5, end_step=10)
+            except Exception as e:
+                print(f"[DEBUG] print_first_env_actor_io failed at step {debug_step}: {e}")
+
             # env stepping
             obs, _, _, _ = env.step(actions)
 
-            # # step counter
-            # if "global_step" not in locals():
-            #     global_step = 0
-            # global_step += 1
-
-            # # print height_scan info every 400 steps
-            # if global_step % 200 == 0:
-            #     # get obs tensor ([num_envs, num_obs])
-            #     if isinstance(obs, TensorDictBase):
-            #         obs_tensor = None
-            #         chosen_key = None
-            #         for k, v in obs.items():
-            #             if isinstance(v, torch.Tensor) and v.ndim == 2:
-            #                 obs_tensor = v
-            #                 chosen_key = k
-            #                 break
-            #         if obs_tensor is None:
-            #             print(f"[DEBUG] No 2D tensor found in obs TensorDict. Keys: {list(obs.keys())}")
-            #         else:
-            #             print(f"[DEBUG] Using obs key '{chosen_key}' for height_scan debug. Shape: {obs_tensor.shape}")
-
-            #     else:
-            #         obs_tensor = obs
-
-            #     if obs_tensor is not None:
-            #         obs_0 = obs_tensor[10].detach().cpu().numpy()
-            #         height_scan_0 = obs_0[45:]
-            #         first_10 = height_scan_0[:10]
-
-            #         print("\n HEIGHT SCAN FROM OBS ")
-            #         print(f"[step {global_step}] height_scan (env 0) first 10:", first_10)
-            #         print("min / max / mean:",
-            #             float(height_scan_0.min()),
-            #             float(height_scan_0.max()),
-            #             float(height_scan_0.mean()))
-                
-            #     sensor = isaac_env.scene.sensors["height_scanner"]
-            #     sensor_height_0 = sensor.data.pos_w[0, 2]           
-            #     ground_z_0 = sensor.data.ray_hits_w[0, :, 2].min() 
-
-            #     print("sensor_height_0:", float(sensor_height_0))
-            #     print("ground_z_0 (min hit z):", float(ground_z_0))
-            #     print("sensor_height_0 - ground_z_0:", float(sensor_height_0 - ground_z_0))
+        debug_step += 1
 
         if args_cli.video:
             timestep += 1

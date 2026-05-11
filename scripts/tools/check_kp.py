@@ -1,5 +1,5 @@
 """
-Offline check for keypoints-table orientation distribution.
+Offline check for keypoints-table distribution.
 
 Input: .npy with shape (N,9): [kp0(3), kp1(3), kp2(3)]
 Assumes:
@@ -8,31 +8,49 @@ Assumes:
 
 Outputs:
 - Sanity checks: ||v1||, ||v2||, orthogonality
+- kp0 workspace statistics:
+    * per-axis stats for kp0_x, kp0_y, kp0_z
+    * absolute min/max box
+    * percentile box (default 1% ~ 99%)
+    * radial distance stats in XY and 3D
 - Orientation distributions:
     * yaw of v1 in XY plane: atan2(v1_y, v1_x)  (deg)
     * pitch of v1 (elevation): atan2(v1_z, sqrt(v1_x^2+v1_y^2)) (deg)
     * tilt of v2 from +Z: acos(v2_z/||v2||) (deg)
-    * v2_z histogram (how "up" the EE +Z is)
 - Coverage stats: percent with v1_x>0, v2_z>0, etc.
-- Optional scatter plots (matplotlib) if --plot is set.
+- Optional plots (matplotlib) if --plot is set.
 
 Usage:
-  python check_kp.py --file scripts/tools/reachable_kp0kp1kp2_lb.npy --plot
+  python scripts/tools/check_kp.py --file scripts/tools/reachable_kp0kp1kp2_lb.npy --plot
 """
 
 import argparse
 import numpy as np
 
+
 def _wrap_pi(a: np.ndarray) -> np.ndarray:
     """Wrap angle (rad) to [-pi, pi]."""
     return (a + np.pi) % (2 * np.pi) - np.pi
 
+
 def _percent(x: np.ndarray) -> float:
     return float(100.0 * np.mean(x))
+
 
 def _hist_summary_deg(angles_deg: np.ndarray, bins: int = 36):
     hist, edges = np.histogram(angles_deg, bins=bins, range=(-180.0, 180.0))
     return hist, edges
+
+
+def _print_stats(name: str, x: np.ndarray):
+    qs = np.percentile(x, [0, 1, 5, 25, 50, 75, 95, 99, 100])
+    print(
+        f"{name}: mean={x.mean():.4f}, std={x.std():.4f}, "
+        f"min={qs[0]:.4f}, p1={qs[1]:.4f}, p5={qs[2]:.4f}, "
+        f"p25={qs[3]:.4f}, p50={qs[4]:.4f}, p75={qs[5]:.4f}, "
+        f"p95={qs[6]:.4f}, p99={qs[7]:.4f}, max={qs[8]:.4f}"
+    )
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -41,12 +59,26 @@ def main():
     ap.add_argument("--dz", type=float, default=0.30, help="Expected ||kp2-kp0||.")
     ap.add_argument("--tol", type=float, default=5e-3, help="Tolerance for norm sanity checks.")
     ap.add_argument("--bins", type=int, default=36, help="Histogram bins for yaw/angles.")
+    ap.add_argument(
+        "--workspace-percentile",
+        type=float,
+        nargs=2,
+        default=(1.0, 99.0),
+        metavar=("LOW", "HIGH"),
+        help="Percentile range used to summarize kp0 workspace, e.g. 1 99.",
+    )
     ap.add_argument("--plot", action="store_true", help="Show matplotlib plots.")
     args = ap.parse_args()
 
     arr = np.load(args.file).astype(np.float64)
     if arr.ndim != 2 or arr.shape[1] != 9:
         raise ValueError(f"Expected (N,9), got {arr.shape}")
+
+    p_lo, p_hi = args.workspace_percentile
+    if not (0.0 <= p_lo < p_hi <= 100.0):
+        raise ValueError(
+            f"--workspace-percentile must satisfy 0 <= low < high <= 100, got {args.workspace_percentile}"
+        )
 
     kp0 = arr[:, 0:3]
     kp1 = arr[:, 3:6]
@@ -65,6 +97,13 @@ def main():
     # Orthogonality cosine
     cos_12 = np.sum(v1u * v2u, axis=1)
 
+    # kp0 stats
+    kp0_x = kp0[:, 0]
+    kp0_y = kp0[:, 1]
+    kp0_z = kp0[:, 2]
+    kp0_r_xy = np.linalg.norm(kp0[:, :2], axis=1)
+    kp0_r_3d = np.linalg.norm(kp0, axis=1)
+
     # v1 yaw in XY (rad->deg)
     yaw = np.arctan2(v1u[:, 1], v1u[:, 0])
     yaw = _wrap_pi(yaw)
@@ -77,18 +116,26 @@ def main():
 
     # v2 tilt from +Z
     v2z = np.clip(v2u[:, 2], -1.0, 1.0)
-    tilt = np.arccos(v2z)             # 0 means perfectly up
+    tilt = np.arccos(v2z)  # 0 means perfectly up
     tilt_deg = np.degrees(tilt)
 
-    # Summaries
     N = arr.shape[0]
     print(f"\n[FILE] {args.file}")
     print(f"[N] {N}")
 
     print("\n--- Sanity checks ---")
-    print(f"||v1|| mean={n1.mean():.6f}, std={n1.std():.6f}, min={n1.min():.6f}, max={n1.max():.6f}  (expect ~{args.dx})")
-    print(f"||v2|| mean={n2.mean():.6f}, std={n2.std():.6f}, min={n2.min():.6f}, max={n2.max():.6f}  (expect ~{args.dz})")
-    print(f"cos(v1,v2) mean={cos_12.mean():.3e}, std={cos_12.std():.3e}, max_abs={np.max(np.abs(cos_12)):.3e}")
+    print(
+        f"||v1|| mean={n1.mean():.6f}, std={n1.std():.6f}, "
+        f"min={n1.min():.6f}, max={n1.max():.6f}  (expect ~{args.dx})"
+    )
+    print(
+        f"||v2|| mean={n2.mean():.6f}, std={n2.std():.6f}, "
+        f"min={n2.min():.6f}, max={n2.max():.6f}  (expect ~{args.dz})"
+    )
+    print(
+        f"cos(v1,v2) mean={cos_12.mean():.3e}, std={cos_12.std():.3e}, "
+        f"max_abs={np.max(np.abs(cos_12)):.3e}"
+    )
 
     ok_n1 = np.abs(n1 - args.dx) < args.tol
     ok_n2 = np.abs(n2 - args.dz) < args.tol
@@ -97,50 +144,119 @@ def main():
     print(f"pass ||v2|| within tol: {_percent(ok_n2):.2f}%")
     print(f"pass orthogonality |cos|<5e-3: {_percent(ok_ortho):.2f}%")
 
+    print("\n--- KP0 workspace statistics ---")
+    _print_stats("kp0_x", kp0_x)
+    _print_stats("kp0_y", kp0_y)
+    _print_stats("kp0_z", kp0_z)
+    _print_stats("kp0_r_xy", kp0_r_xy)
+    _print_stats("kp0_r_3d", kp0_r_3d)
+
+    kp0_abs_min = kp0.min(axis=0)
+    kp0_abs_max = kp0.max(axis=0)
+    kp0_pct_min = np.percentile(kp0, p_lo, axis=0)
+    kp0_pct_max = np.percentile(kp0, p_hi, axis=0)
+
+    print("\nKP0 absolute workspace box:")
+    print(
+        f"  x in [{kp0_abs_min[0]:.4f}, {kp0_abs_max[0]:.4f}], "
+        f"y in [{kp0_abs_min[1]:.4f}, {kp0_abs_max[1]:.4f}], "
+        f"z in [{kp0_abs_min[2]:.4f}, {kp0_abs_max[2]:.4f}]"
+    )
+
+    print(f"\nKP0 percentile workspace box ({p_lo:.1f}% ~ {p_hi:.1f}%):")
+    print(
+        f"  x in [{kp0_pct_min[0]:.4f}, {kp0_pct_max[0]:.4f}], "
+        f"y in [{kp0_pct_min[1]:.4f}, {kp0_pct_max[1]:.4f}], "
+        f"z in [{kp0_pct_min[2]:.4f}, {kp0_pct_max[2]:.4f}]"
+    )
+
+    inside_pct_box = (
+        (kp0_x >= kp0_pct_min[0]) & (kp0_x <= kp0_pct_max[0]) &
+        (kp0_y >= kp0_pct_min[1]) & (kp0_y <= kp0_pct_max[1]) &
+        (kp0_z >= kp0_pct_min[2]) & (kp0_z <= kp0_pct_max[2])
+    )
+    print(f"Samples inside percentile workspace box: {_percent(inside_pct_box):.2f}%")
+
     print("\n--- Coverage / constraints style stats ---")
-    print(f"v1_x > 0 (EE +X in front half-space): {_percent(v1u[:,0] > 0):.2f}%")
-    print(f"v2_z > 0 (EE +Z points upward-ish): {_percent(v2u[:,2] > 0):.2f}%")
+    print(f"kp0_x > 0 (workspace in front of base): {_percent(kp0_x > 0):.2f}%")
+    print(f"v1_x > 0 (EE +X in front half-space): {_percent(v1u[:, 0] > 0):.2f}%")
+    print(f"v2_z > 0 (EE +Z points upward-ish): {_percent(v2u[:, 2] > 0):.2f}%")
     print(f"tilt < 30 deg (Z within 30deg of up): {_percent(tilt_deg < 30.0):.2f}%")
     print(f"tilt < 60 deg: {_percent(tilt_deg < 60.0):.2f}%")
 
     print("\n--- Orientation distributions ---")
-    def pr(name, x):
-        qs = np.percentile(x, [0, 1, 5, 25, 50, 75, 95, 99, 100])
-        print(f"{name}: mean={x.mean():.2f}, std={x.std():.2f}, "
-              f"p1={qs[1]:.2f}, p5={qs[2]:.2f}, p50={qs[4]:.2f}, p95={qs[6]:.2f}, p99={qs[7]:.2f}")
+    _print_stats("yaw_deg(v1 in XY)", yaw_deg)
+    _print_stats("elev_deg(v1)", elev_deg)
+    _print_stats("tilt_deg(v2 from +Z)", tilt_deg)
 
-    pr("yaw_deg(v1 in XY)", yaw_deg)
-    pr("elev_deg(v1)", elev_deg)
-    pr("tilt_deg(v2 from +Z)", tilt_deg)
-
-    # Yaw histogram occupancy
     hist, edges = _hist_summary_deg(yaw_deg, bins=args.bins)
     occ = np.sum(hist > 0)
-    print(f"\nYaw histogram bins: {args.bins}, occupied bins: {occ}/{args.bins} ({100.0*occ/args.bins:.1f}%)")
+    print(f"\nYaw histogram bins: {args.bins}, occupied bins: {occ}/{args.bins} ({100.0 * occ / args.bins:.1f}%)")
     top = np.argsort(hist)[::-1][:10]
     print("Top yaw bins (count, range_deg):")
     for i in top:
         if hist[i] == 0:
             break
-        lo, hi = edges[i], edges[i+1]
+        lo, hi = edges[i], edges[i + 1]
         print(f"  {hist[i]:6d}  [{lo:7.1f}, {hi:7.1f})")
 
-    # Tilt histogram (0..180)
     tilt_hist, tilt_edges = np.histogram(tilt_deg, bins=36, range=(0.0, 180.0))
     occ2 = np.sum(tilt_hist > 0)
-    print(f"\nTilt histogram bins: 36 (0..180), occupied: {occ2}/36 ({100.0*occ2/36:.1f}%)")
+    print(f"\nTilt histogram bins: 36 (0..180), occupied: {occ2}/36 ({100.0 * occ2 / 36:.1f}%)")
     top2 = np.argsort(tilt_hist)[::-1][:10]
     print("Top tilt bins (count, range_deg):")
     for i in top2:
         if tilt_hist[i] == 0:
             break
-        lo, hi = tilt_edges[i], tilt_edges[i+1]
+        lo, hi = tilt_edges[i], tilt_edges[i + 1]
         print(f"  {tilt_hist[i]:6d}  [{lo:7.1f}, {hi:7.1f})")
 
-    # Optional plots
     if args.plot:
         import matplotlib.pyplot as plt
 
+        # kp0 axis histograms
+        plt.figure()
+        plt.hist(kp0_x, bins=50)
+        plt.xlabel("kp0_x")
+        plt.ylabel("count")
+        plt.title("KP0 X distribution")
+        plt.show()
+
+        plt.figure()
+        plt.hist(kp0_y, bins=50)
+        plt.xlabel("kp0_y")
+        plt.ylabel("count")
+        plt.title("KP0 Y distribution")
+        plt.show()
+
+        plt.figure()
+        plt.hist(kp0_z, bins=50)
+        plt.xlabel("kp0_z")
+        plt.ylabel("count")
+        plt.title("KP0 Z distribution")
+        plt.show()
+
+        # kp0 XY scatter
+        M = min(N, 20000)
+        idx = np.random.default_rng(0).choice(N, size=M, replace=False) if N > M else np.arange(N)
+
+        plt.figure()
+        plt.scatter(kp0_x[idx], kp0_y[idx], s=2)
+        plt.xlabel("kp0_x")
+        plt.ylabel("kp0_y")
+        plt.title("KP0 XY coverage (subsample)")
+        plt.axis("equal")
+        plt.show()
+
+        # kp0 XZ scatter
+        plt.figure()
+        plt.scatter(kp0_x[idx], kp0_z[idx], s=2)
+        plt.xlabel("kp0_x")
+        plt.ylabel("kp0_z")
+        plt.title("KP0 XZ coverage (subsample)")
+        plt.show()
+
+        # yaw / orientation plots
         plt.figure()
         plt.hist(yaw_deg, bins=args.bins)
         plt.xlabel("yaw_deg of (kp1-kp0)")
@@ -162,15 +278,13 @@ def main():
         plt.title("Tilt distribution of EE +Z direction")
         plt.show()
 
-        # Scatter: yaw vs tilt (subsample for speed)
-        M = min(N, 20000)
-        idx = np.random.default_rng(0).choice(N, size=M, replace=False) if N > M else np.arange(N)
         plt.figure()
         plt.scatter(yaw_deg[idx], tilt_deg[idx], s=2)
         plt.xlabel("yaw_deg (v1)")
         plt.ylabel("tilt_deg (v2 from +Z)")
         plt.title("Yaw vs tilt (subsample)")
         plt.show()
+
 
 if __name__ == "__main__":
     main()

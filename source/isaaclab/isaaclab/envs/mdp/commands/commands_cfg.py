@@ -13,7 +13,7 @@ from isaaclab.utils import configclass
 
 from .null_command import NullCommand
 from .pose_2d_command import TerrainBasedPose2dCommand, UniformPose2dCommand
-from .pose_command import UniformPoseCommand, PresampledKeypointsCommandLB, PresampledKeypointsInterpolateCommandLB
+from .pose_command import UniformPoseCommand, PresampledKeypointsDirectCommandLB, PresampledKeypointsCubicTrajectoryCommandLB, PresampledKeypointsDirectCommandPLB
 from .velocity_command import NormalVelocityCommand, UniformVelocityCommand
 
 
@@ -249,19 +249,17 @@ class TerrainBasedPose2dCommandCfg(UniformPose2dCommandCfg):
 
 
 @configclass
-class PresampledKeypointsCommandLBCfg(CommandTermCfg):
-    """Configuration for a presampled keypoints command generator (Level-Base frame: LB).
+class PresampledKeypointsDirectCommandLBCfg(CommandTermCfg):
+    """Config for direct sampled LB keypoint command.
 
-    LB frame:
-    - Origin: base origin in world (x,y,z)  
-    - Orientation: keep base yaw, roll/pitch = 0 
-
-    Expected file shape (N, 9):
-    [kp0x, kp0y, kp0z,  kp1x, kp1y, kp1z,  kp2x, kp2y, kp2z]
-    where kp0,kp1,kp2 are expressed in LB.
+    Behavior:
+      - sample a 9D keypoint target directly from a presampled reachable table
+      - hold that sampled target until next resampling
+      - no interpolation
+      - no adjacent-target clipping
     """
 
-    class_type: type = PresampledKeypointsCommandLB
+    class_type: type = PresampledKeypointsDirectCommandLB
 
     asset_name: str = MISSING
     body_name: str = MISSING
@@ -269,11 +267,11 @@ class PresampledKeypointsCommandLBCfg(CommandTermCfg):
 
     sample_mode: str = "random"
 
-    # Must match your sampling offsets
     kp_dx: float = 0.30
     kp_dz: float = 0.30
 
-    # debug visualization (3 points per env, stacked)
+    debug_vis: bool = False
+
     goal_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
         prim_path="/Visuals/Command/goal_kp_lb"
     )
@@ -281,20 +279,23 @@ class PresampledKeypointsCommandLBCfg(CommandTermCfg):
         prim_path="/Visuals/Command/current_kp_w"
     )
 
-    # scale down marker size
     goal_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
     current_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
 
 
 @configclass
-class PresampledKeypointsInterpolateCommandLBCfg(CommandTermCfg):
-    """Config for presampled keypoints command generator (LB) with kp0- & rot-threshold interpolation.
+class PresampledKeypointsCubicTrajectoryCommandLBCfg(CommandTermCfg):
+    """Config for presampled LB keypoint command in fixed-goal tracking form.
 
-    Expected file shape (N,9) in LB:
-      [kp0(3), kp1(3), kp2(3)]
+    Behavior:
+      - sample a fixed goal from the presampled table
+      - apply adjacent-target limit
+      - map accepted distance to trajectory duration
+      - generate cubic reference online from start -> fixed goal
+      - hold at the fixed goal for the rest of the cycle
     """
 
-    class_type: type = PresampledKeypointsInterpolateCommandLB
+    class_type: type = PresampledKeypointsCubicTrajectoryCommandLB
 
     asset_name: str = MISSING
     body_name: str = MISSING
@@ -302,15 +303,20 @@ class PresampledKeypointsInterpolateCommandLBCfg(CommandTermCfg):
 
     sample_mode: str = "random"
 
-    # Must match sampling offsets
     kp_dx: float = 0.30
     kp_dz: float = 0.30
 
-    # kp0 max jump in LB before interpolating
-    kp0_threshold: float = 0.20
-    rot_threshold: float = 0.40
+    kp0_threshold_range: tuple[float, float] = (0.20, 0.50)
 
-    # debug visualization (3 points per env, stacked)
+    cycle_duration_s: float = 8.0
+
+    # Accepted goal distance in [threshold_min, threshold_max]
+    # is mapped to trajectory duration in [traj_duration_min_s, traj_duration_max_s].
+    traj_duration_min_s: float = 4.0
+    traj_duration_max_s: float = 6.0
+
+    debug_vis: bool = False
+
     goal_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
         prim_path="/Visuals/Command/goal_kp_lb"
     )
@@ -318,7 +324,40 @@ class PresampledKeypointsInterpolateCommandLBCfg(CommandTermCfg):
         prim_path="/Visuals/Command/current_kp_w"
     )
 
-    # scale down marker size
     goal_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
     current_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
 
+
+@configclass
+class PresampledKeypointsDirectCommandPLBCfg(CommandTermCfg):
+    """Config for direct sampled PLB keypoint command.
+
+    PLB frame:
+      - origin: [base_x, base_y, ground_z]
+      - orientation: yaw-only(base_quat)
+    """
+
+    class_type: type = PresampledKeypointsDirectCommandPLB
+
+    asset_name: str = MISSING
+    body_name: str = MISSING
+    file_path: str = MISSING
+
+    sample_mode: str = "random"
+
+    kp_dx: float = 0.30
+    kp_dz: float = 0.30
+
+    ground_z: float = 0.0
+
+    debug_vis: bool = False
+
+    goal_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/goal_kp_plb"
+    )
+    current_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/current_kp_w"
+    )
+
+    goal_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    current_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)

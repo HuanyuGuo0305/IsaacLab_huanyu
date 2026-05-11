@@ -3,16 +3,16 @@ from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
 
 @configclass
-class UnitreeB2WZ1LBLocoManipPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+class UnitreeB2WZ1PLBWholeBodyLocoManipPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 5000
-    save_interval = 500
-    experiment_name = "unitree_b2wz1_lb_loco_manip"
+    max_iterations = 10000
+    save_interval = 1000
+    experiment_name = "unitree_b2wz1_plb_wholebody_loco_manip"
     empirical_normalization = False
     resume = False
     logger = "wandb"
     wandb_entity = "huanyu_crl"
-    wandb_project = "unitree_b2wz1_lb_loco_manip"
+    wandb_project = "unitree_b2wz1_plb_wholebody_loco_manip"
     obs_groups = {'policy': ['policy'],
                   'critic': ['critic']}
     policy = RslRlPpoActorCriticCfg(
@@ -27,7 +27,7 @@ class UnitreeB2WZ1LBLocoManipPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.004,
+        entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=5.0e-4,

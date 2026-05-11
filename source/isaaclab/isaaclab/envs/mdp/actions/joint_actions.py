@@ -196,6 +196,123 @@ class JointPositionAction(JointAction):
         self._asset.set_joint_position_target(self.processed_actions, joint_ids=self._joint_ids)
 
 
+class DelayedJointPositionAction(JointAction):
+    """Joint position action with per-environment action delay.
+
+    The raw action is first transformed exactly like JointPositionAction:
+        processed_action = raw_action * scale + offset
+
+    But instead of immediately applying processed_action to the articulation,
+    we push it into a FIFO history buffer and apply an older command according
+    to the sampled delay steps for each environment.
+
+    Delay is sampled uniformly in [min_delay, max_delay] on reset.
+    """
+
+    cfg: actions_cfg.DelayedJointPositionActionCfg
+
+    def __init__(self, cfg: actions_cfg.DelayedJointPositionActionCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+
+        # use default joint positions as offset
+        if cfg.use_default_offset:
+            self._offset = self._asset.data.default_joint_pos[:, self._joint_ids].clone()
+
+        if cfg.min_delay < 0 or cfg.max_delay < 0:
+            raise ValueError(f"Delay must be non-negative, got min={cfg.min_delay}, max={cfg.max_delay}.")
+        if cfg.max_delay < cfg.min_delay:
+            raise ValueError(
+                f"max_delay must be >= min_delay, got min={cfg.min_delay}, max={cfg.max_delay}."
+            )
+
+        self._min_delay = int(cfg.min_delay)
+        self._max_delay = int(cfg.max_delay)
+        self._history_len = self._max_delay + 1  # include current step
+
+        # buffer shape: [history_len, num_envs, action_dim]
+        self._action_history = torch.zeros(
+            self._history_len, self.num_envs, self.action_dim, device=self.device
+        )
+
+        # per-env integer delay
+        self._delay_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+
+        # initialize delays for all envs
+        self._resample_delays(None)
+
+    def _resample_delays(self, env_ids: Sequence[int] | None):
+        """Sample delay steps for selected envs."""
+        if env_ids is None:
+            env_ids_t = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        else:
+            if isinstance(env_ids, torch.Tensor):
+                env_ids_t = env_ids.to(device=self.device, dtype=torch.long)
+            else:
+                env_ids_t = torch.tensor(env_ids, device=self.device, dtype=torch.long)
+
+        if env_ids_t.numel() == 0:
+            return
+
+        if self._max_delay == self._min_delay:
+            self._delay_steps[env_ids_t] = self._min_delay
+        else:
+            self._delay_steps[env_ids_t] = torch.randint(
+                low=self._min_delay,
+                high=self._max_delay + 1,
+                size=(env_ids_t.numel(),),
+                device=self.device,
+                dtype=torch.long,
+            )
+
+    def process_actions(self, actions: torch.Tensor):
+        # same preprocessing as parent
+        super().process_actions(actions)
+
+        # FIFO update:
+        # shift older entries toward the end, newest at index 0
+        if self._history_len > 1:
+            self._action_history[1:] = self._action_history[:-1].clone()
+        self._action_history[0] = self._processed_actions
+
+    def apply_actions(self):
+        # gather delayed action per env
+        # delayed_action[env] = history[delay_steps[env], env]
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        delayed_actions = self._action_history[self._delay_steps, env_ids]
+
+        self._asset.set_joint_position_target(delayed_actions, joint_ids=self._joint_ids)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        super().reset(env_ids)
+
+        if env_ids is None:
+            env_ids_t = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        else:
+            if isinstance(env_ids, torch.Tensor):
+                env_ids_t = env_ids.to(device=self.device, dtype=torch.long)
+            else:
+                env_ids_t = torch.tensor(env_ids, device=self.device, dtype=torch.long)
+
+        if env_ids_t.numel() == 0:
+            return
+
+        # reset sampled delays
+        self._resample_delays(env_ids_t)
+
+        # reset history buffer for those envs to default offset,
+        # so the delayed command starts from a sensible target.
+        if isinstance(self._offset, torch.Tensor):
+            default_cmd = self._offset[env_ids_t]
+        else:
+            default_cmd = torch.zeros(
+                (env_ids_t.numel(), self.action_dim), device=self.device
+            ) + float(self._offset)
+
+        self._action_history[:, env_ids_t, :] = default_cmd.unsqueeze(0).expand(
+            self._history_len, env_ids_t.numel(), self.action_dim
+        )
+
+
 class RelativeJointPositionAction(JointAction):
     r"""Joint action term that applies the processed actions to the articulation's joints as relative position commands.
 
