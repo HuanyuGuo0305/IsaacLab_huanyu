@@ -15,8 +15,9 @@ from .commands_cfg import (
     PresampledKeypointsDirectCommandLBCfg,
     PresampledKeypointsDirectCommandPLBCfg,
     PresampledKeypointsCubicTrajectoryCommandLBCfg,
+    PresampledKeypointsCubicTrajectoryCommandPLBCfg,
 )
 from .null_command import NullCommand
 from .pose_2d_command import TerrainBasedPose2dCommand, UniformPose2dCommand
-from .pose_command import UniformPoseCommand, PresampledKeypointsDirectCommandLB, PresampledKeypointsDirectCommandPLB, PresampledKeypointsCubicTrajectoryCommandLB
+from .pose_command import UniformPoseCommand, PresampledKeypointsDirectCommandLB, PresampledKeypointsDirectCommandPLB, PresampledKeypointsCubicTrajectoryCommandLB, PresampledKeypointsCubicTrajectoryCommandPLB
 from .velocity_command import NormalVelocityCommand, UniformVelocityCommand

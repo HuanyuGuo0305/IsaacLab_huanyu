@@ -516,120 +516,10 @@ G1_MINIMAL_CFG.spawn.usd_path = f"{ISAACLAB_NUCLEUS_DIR}/Robots/Unitree/G1/g1_mi
 This configuration removes most collision meshes to speed up simulation.
 """
 
-UNITREE_B2WZ1_CFG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/Unitree/B2WZ1/usd/b2wz1.usd",
-        activate_contact_sensors=True,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            retain_accelerations=False,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=1000.0,
-            max_depenetration_velocity=1.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=True,
-            solver_position_iteration_count=4,
-            solver_velocity_iteration_count=0,
-        ),
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.6017),
-        joint_pos={
-            # leg
-            ".*L_hip_joint": 0.1,
-            ".*R_hip_joint": -0.1,
-            "F[L,R]_thigh_joint": 0.8,
-            "R[L,R]_thigh_joint": 1.0,
-            ".*_calf_joint": -1.5,
-            ".*_foot_joint": 0.0,
-            # arm
-            "joint1": 0.0,
-            "joint2": 1.48,
-            "joint3": -1.0,  # -0.63
-            "joint4": -0.54,  # -0.84
-            "joint5": 0.0,
-            "joint6": 0.0,
-            "jointGripper": 0.0,
-        },
-        joint_vel={".*": 0.0},
-    ),
-    soft_joint_pos_limit_factor=0.9,
-    actuators={
-        "hip": DCMotorCfg(
-            joint_names_expr=[".*_hip_joint"],
-            effort_limit=200.0,
-            saturation_effort=200.0,
-            velocity_limit=23.0,
-            stiffness=160.0,
-            damping=5.0,
-            friction=0.01,
-        ),
-        "thigh": DCMotorCfg(
-            joint_names_expr=[".*_thigh_joint"],
-            effort_limit=200.0,
-            saturation_effort=200.0,
-            velocity_limit=23.0,
-            stiffness=160.0,
-            damping=5.0,
-            friction=0.01,
-        ),
-        "calf": DCMotorCfg(
-            joint_names_expr=[".*_calf_joint"],
-            effort_limit=320.0,
-            saturation_effort=320.0,
-            velocity_limit=14.0,
-            stiffness=160.0,
-            damping=5.0,
-            friction=0.01,
-        ),
-        "wheel": ImplicitActuatorCfg(
-            joint_names_expr=[".*_foot_joint"],
-            effort_limit_sim=20.0,
-            velocity_limit_sim=50.0,
-            stiffness=0.0,
-            damping=10.0,
-            friction=0.01,
-        ),
-        "z1_arm_joint2": DCMotorCfg(
-            joint_names_expr=["joint2"],
-            effort_limit=60.0,
-            saturation_effort=60.0,
-            velocity_limit=2.0,
-            stiffness=50.0,
-            damping=4.0,
-            friction=0.01,
-            armature=0.02,
-        ),
-        "z1_arm_joint3": DCMotorCfg(
-            joint_names_expr=["joint3"],
-            effort_limit=30.0,
-            saturation_effort=30.0,
-            velocity_limit=2.0,
-            stiffness=50.0,
-            damping=4.0,
-            friction=0.01,
-            armature=0.02,
-        ),
-        "z1_arm_rest": DCMotorCfg(
-            joint_names_expr=["joint1", "joint4", "joint5", "joint6", "jointGripper"],
-            effort_limit=30.0,
-            saturation_effort=30.0,
-            velocity_limit=2.0,
-            stiffness=30.0,
-            damping=3.0,
-            friction=0.01,
-            armature=0.02,
-        )
-    },
-)
 
-
-UNITREE_B2WZ1_HIGHGAINS_CFG = ArticulationCfg(
+UNITREE_B2WZ1_SAMPLING_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/Unitree/B2WZ1/usd/b2wz1.usd",
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/Unitree/B2WZ1_GRIPPER/b2wz1.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -662,7 +552,7 @@ UNITREE_B2WZ1_HIGHGAINS_CFG = ArticulationCfg(
             "joint3": -1.0,  # -0.63
             "joint4": -0.54,  # -0.84
             "joint5": 0.0,
-            "joint6": 0.0,
+            "joint6": 1.57,
             "jointGripper": 0.0,
         },
         joint_vel={".*": 0.0},
@@ -882,6 +772,127 @@ UNITREE_B2WZ1_HIGHGAINS_PITCH_CFG = ArticulationCfg(
             velocity_limit=2.0,
             stiffness=89.6,
             damping=3.0,
+            friction=0.01,
+            armature=0.02,
+        ),
+    },
+)
+
+
+UNITREE_B2WZ1_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/Unitree/B2WZ1_GRIPPER/b2wz1.usd",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=True,
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=0,
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.6017), 
+        joint_pos={
+            # leg
+            ".*L_hip_joint": 0.1,
+            ".*R_hip_joint": -0.1,
+            "F[L,R]_thigh_joint": 0.8,
+            "R[L,R]_thigh_joint": 1.0,
+            ".*_calf_joint": -1.5,
+            ".*_foot_joint": 0.0,
+            # arm
+            "joint1": 0.0,
+            "joint2": 1.48,  # 1.0
+            "joint3": -1.0,  # -0.4
+            "joint4": -0.54,  # -0.84/-0.54
+            "joint5": 0.0,
+            "joint6": 1.57,
+            "jointGripper": 0.0,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.9,
+    actuators={
+        "hip": DCMotorCfg(
+            joint_names_expr=[".*_hip_joint"],
+            effort_limit=200.0,
+            saturation_effort=200.0,
+            velocity_limit=23.0,
+            stiffness=200.0,
+            damping=8.0,
+            friction=0.01,
+        ),
+        "thigh": DCMotorCfg(
+            joint_names_expr=[".*_thigh_joint"],
+            effort_limit=200.0,
+            saturation_effort=200.0,
+            velocity_limit=23.0,
+            stiffness=200.0,
+            damping=8.0,
+            friction=0.01,
+        ),
+        "calf": DCMotorCfg(
+            joint_names_expr=[".*_calf_joint"],
+            effort_limit=320.0,
+            saturation_effort=320.0,
+            velocity_limit=14.0,
+            stiffness=300.0,
+            damping=12.0,
+            friction=0.01,
+        ),
+        "wheel": ImplicitActuatorCfg(
+            joint_names_expr=[".*_foot_joint"],
+            effort_limit_sim=20.0,
+            velocity_limit_sim=50.0,
+            stiffness=0.0,
+            damping=10.0,
+            friction=0.01,
+        ),
+        "z1_arm_jointrest": DCMotorCfg(
+            joint_names_expr=["joint4", "joint5", "joint6", "jointGripper"],
+            effort_limit=30.0,
+            saturation_effort=30.0,
+            velocity_limit=2.0,
+            stiffness=76.8,
+            damping=4.0,
+            friction=0.01,
+            armature=0.02,
+        ),
+        "z1_arm_joint1": DCMotorCfg(
+            joint_names_expr=["joint1"],
+            effort_limit=30.0,
+            saturation_effort=30.0,
+            velocity_limit=2.0,
+            stiffness=76.8,
+            damping=4.0,
+            friction=0.01,
+            armature=0.02,
+        ),
+        "z1_arm_joint2": DCMotorCfg(
+            joint_names_expr=["joint2"],
+            effort_limit=60.0,
+            saturation_effort=60.0,
+            velocity_limit=2.0,
+            stiffness=89.6,
+            damping=4.0,
+            friction=0.01,
+            armature=0.02,
+        ),
+        "z1_arm_joint3": DCMotorCfg(
+            joint_names_expr=["joint3"],
+            effort_limit=30.0,
+            saturation_effort=30.0,
+            velocity_limit=2.0,
+            stiffness=89.6,
+            damping=4.0,
             friction=0.01,
             armature=0.02,
         ),

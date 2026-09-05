@@ -26,10 +26,24 @@ class RslRlPpoActorCriticCfg:
     """The policy class name. Default is ActorCritic."""
 
     init_noise_std: float = MISSING
-    """The initial noise standard deviation for the policy."""
+    """The initial noise standard deviation for the policy.
+
+    This parameter is used only by Gaussian policies and is ignored when
+    ``distribution_type="beta"``.
+    """
 
     noise_std_type: Literal["scalar", "log"] = "scalar"
-    """The type of noise standard deviation for the policy. Default is scalar."""
+    """The type of noise standard deviation for the policy. Default is scalar.
+
+    This parameter is used only by Gaussian policies and is ignored when
+    ``distribution_type="beta"``.
+    """
+
+    state_dependent_std: bool = False
+    """Whether the Gaussian policy predicts a state-dependent standard deviation.
+
+    This option is Gaussian-only and must remain False for Beta policies.
+    """
 
     actor_obs_normalization: bool = MISSING
     """Whether to normalize the observation for the actor network."""
@@ -45,6 +59,37 @@ class RslRlPpoActorCriticCfg:
 
     activation: str = MISSING
     """The activation function for the actor and critic networks."""
+
+    distribution_type: Literal["gaussian", "beta"] = "gaussian"
+    """The action distribution used by the actor.
+
+    ``"gaussian"`` preserves the standard RSL-RL implementation.
+    ``"beta"`` predicts alpha and beta concentrations for every action
+    dimension, samples in ``(0, 1)``, and maps the result to ``(-1, 1)``.
+    """
+
+    beta_min_concentration: float = 1.0
+    """The positive offset added to each Beta concentration after softplus.
+
+    A value of 1.0 guarantees alpha and beta are greater than one and avoids
+    initially U-shaped, boundary-seeking action distributions.
+    """
+
+    beta_init_concentration: float = 2.0
+    """The initial target value for both alpha and beta concentrations.
+
+    Equal alpha and beta produce an initial action mean of zero after mapping
+    the unit-interval Beta action to the environment action range.
+    """
+
+    beta_eps: float = 1.0e-6
+    """Numerical epsilon used for Beta concentrations and action boundaries."""
+
+    beta_inference_mode: Literal["mean", "mode"] = "mean"
+    """The deterministic Beta action used during inference and export.
+
+    ``"mean"`` is recommended for stable continuous robot control.
+    """
 
 
 @configclass
@@ -98,7 +143,11 @@ class RslRlPpoAlgorithmCfg:
     """The coefficient for the entropy loss."""
 
     desired_kl: float = MISSING
-    """The desired KL divergence."""
+    """The desired KL divergence.
+
+    For Beta policies, this is the joint old-policy-to-new-policy KL summed
+    over all independent action dimensions, matching standard PPO semantics.
+    """
 
     max_grad_norm: float = MISSING
     """The maximum gradient norm."""
@@ -180,6 +229,10 @@ class RslRlBaseRunnerCfg:
 
     .. note::
         This clipping is performed inside the :class:`RslRlVecEnvWrapper` wrapper.
+
+    For Beta policies, use ``1.0`` as a defensive bound or ``None``. Values below
+    one change the action executed by the environment relative to the action
+    stored by PPO and should not be used.
     """
 
     save_interval: int = MISSING
@@ -209,6 +262,9 @@ class RslRlBaseRunnerCfg:
     """Whether to resume a previous training. Default is False.
 
     This flag will be ignored for distillation.
+
+    Gaussian and Beta actor output parameterizations are checkpoint-incompatible.
+    Start a new run when switching ``distribution_type``.
     """
 
     load_run: str = ".*"
@@ -222,13 +278,13 @@ class RslRlBaseRunnerCfg:
 
     If regex expression, the latest (alphabetical order) matching file will be loaded.
     """
-    
+
     video: bool = False
     """Whether to record videos during training. Default is False."""
-    
-    video_interval: int = 500
+
+    video_interval: int = 100
     """The number of iterations between video recordings. Default is 100."""
-    
+
     video_length: int = 5
     """The length of each recorded video in seconds. Default is 5."""
 

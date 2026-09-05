@@ -13,7 +13,7 @@ from isaaclab.utils import configclass
 
 from .null_command import NullCommand
 from .pose_2d_command import TerrainBasedPose2dCommand, UniformPose2dCommand
-from .pose_command import UniformPoseCommand, PresampledKeypointsDirectCommandLB, PresampledKeypointsCubicTrajectoryCommandLB, PresampledKeypointsDirectCommandPLB
+from .pose_command import UniformPoseCommand, PresampledKeypointsDirectCommandLB, PresampledKeypointsCubicTrajectoryCommandLB, PresampledKeypointsDirectCommandPLB, PresampledKeypointsCubicTrajectoryCommandPLB
 from .velocity_command import NormalVelocityCommand, UniformVelocityCommand
 
 
@@ -349,6 +349,68 @@ class PresampledKeypointsDirectCommandPLBCfg(CommandTermCfg):
     kp_dz: float = 0.30
 
     ground_z: float = 0.0
+
+    debug_vis: bool = False
+
+    goal_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/goal_kp_plb"
+    )
+    current_kp_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/current_kp_w"
+    )
+
+    goal_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    current_kp_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+
+
+@configclass
+class PresampledKeypointsCubicTrajectoryCommandPLBCfg(CommandTermCfg):
+    """Config for cubic safe PLB keypoint trajectory command.
+
+    PLB frame:
+      - origin: [base_x, base_y, ground_z]
+      - orientation: yaw-only(base_quat)
+
+    Behavior:
+      1. Start from current command / current EE pose.
+      2. Sample endpoint from presampled collision-free keypoint table.
+      3. Generate pose-level cubic trajectory.
+      4. Position uses smoothstep interpolation.
+      5. Orientation uses SLERP.
+      6. Reject sampled endpoint if intermediate trajectory enters expanded base box.
+      7. Trajectory duration is chosen from distance / max_lin_vel.
+    """
+
+    class_type: type = PresampledKeypointsCubicTrajectoryCommandPLB
+
+    asset_name: str = MISSING
+    body_name: str = MISSING
+    file_path: str = MISSING
+
+    sample_mode: str = "random"
+
+    kp_dx: float = 0.30
+    kp_dz: float = 0.30
+
+    ground_z: float = 0.0
+
+    # Timing
+    cycle_duration_s: float = 8.0
+    max_lin_vel: float = 0.12
+    traj_duration_min_s: float = 1.0
+    traj_duration_max_s: float = 7.0
+
+    # Collision filtering in PLB frame
+    base_box_min: tuple[float, float, float] = (-0.35, -0.25, 0.00)
+    base_box_max: tuple[float, float, float] = (0.35, 0.25, 0.55)
+    base_box_margin: float = 0.08
+    collision_check_samples: int = 20
+    resample_attempts: int = 50
+    collision_check_all_keypoints: bool = True
+
+    # If true, reject endpoints whose distance would require a trajectory longer
+    # than traj_duration_max_s at max_lin_vel.
+    reject_too_far_for_speed: bool = True
 
     debug_vis: bool = False
 

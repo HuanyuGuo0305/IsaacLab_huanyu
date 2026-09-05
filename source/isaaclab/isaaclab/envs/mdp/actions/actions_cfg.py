@@ -79,6 +79,38 @@ class DelayedJointPositionActionCfg(JointActionCfg):
 
 
 @configclass
+class RateLimitedDelayedJointPositionActionCfg(DelayedJointPositionActionCfg):
+    """Configuration for delayed joint position action with target rate limit.
+
+    This behaves like DelayedJointPositionAction, but the processed joint-position
+    target is rate-limited before being pushed into the delay FIFO.
+
+    processed_action = raw_action * scale + offset
+    limited_action = prev_limited_action + clamp(
+        processed_action - prev_limited_action,
+        -target_rate_limit * dt,
+        +target_rate_limit * dt,
+    )
+    """
+
+    class_type: type[ActionTerm] = joint_actions.RateLimitedDelayedJointPositionAction
+
+    target_rate_limit: float | tuple[float, ...] | list[float] = 1.0
+    """Joint target rate limit in rad/s.
+
+    Can be:
+      - float: same limit for all controlled joints
+      - list/tuple: per-joint limit, length must equal action_dim
+    """
+
+    reset_to_current_joint_pos: bool = True
+    """If True, reset previous limited target to current joint position.
+
+    If False, reset previous limited target to default offset.
+    """
+
+
+@configclass
 class RelativeJointPositionActionCfg(JointActionCfg):
     """Configuration for the relative joint position action term.
 

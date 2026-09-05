@@ -34,6 +34,12 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument(
+    "--reward_visualizer",
+    action="store_true",
+    default=False,
+    help="Display real-time curves for the environment reward terms during policy inference.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -143,6 +149,178 @@ def print_first_env_actor_io(obs, actions, step, start_step=5, end_step=10):
     print("=========================================================\n")
 
 
+def _scalarize_reward_value(value):
+    """Convert a reward log value to one float.
+
+    Tensor/array values with an environment dimension are averaged so the
+    visualizer remains readable when play.py runs with multiple environments.
+    """
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return None
+        return float(value.detach().float().mean().cpu().item())
+
+    # NumPy is intentionally not imported globally. Matplotlib depends on it,
+    # and array-like values usually expose ``mean`` and ``item``.
+    if hasattr(value, "mean") and hasattr(value, "item"):
+        try:
+            return float(value.mean().item())
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+    if isinstance(value, (int, float, bool)):
+        return float(value)
+
+    return None
+
+
+def _collect_reward_scalars(source, prefix=""):
+    """Recursively collect scalar entries whose path represents a reward term."""
+    result = {}
+    if source is None:
+        return result
+
+    if isinstance(source, TensorDictBase):
+        source = {key: source[key] for key in source.keys()}
+
+    if isinstance(source, dict):
+        for key, value in source.items():
+            key = str(key)
+            path = f"{prefix}/{key}" if prefix else key
+            if isinstance(value, (dict, TensorDictBase)):
+                result.update(_collect_reward_scalars(value, path))
+                continue
+
+            # Environment logging convention is usually Reward/<term>.
+            # Also accept reward_* and *_reward for custom environments.
+            path_lower = path.lower()
+            if (
+                path_lower.startswith("reward/")
+                or "/reward/" in path_lower
+                or path_lower.startswith("rewards/")
+                or "/rewards/" in path_lower
+                or key.lower().startswith("reward_")
+                or key.lower().endswith("_reward")
+            ):
+                scalar = _scalarize_reward_value(value)
+                if scalar is not None:
+                    result[path] = scalar
+
+    return result
+
+
+class RewardVisualizer:
+    """Non-blocking Matplotlib visualizer with one subplot per reward term."""
+
+    def __init__(self, history_length=500, refresh_interval=2, max_columns=3):
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            raise RuntimeError(
+                "--reward_visualizer requires matplotlib. "
+                "Install it in the Isaac Lab Python environment."
+            ) from exc
+
+        self.plt = plt
+        self.history_length = int(history_length)
+        self.refresh_interval = max(1, int(refresh_interval))
+        self.max_columns = max(1, int(max_columns))
+        self.step = 0
+        self.series = {}
+        self.axes = {}
+        self.lines = {}
+        self._layout_names = []
+
+        self.plt.ion()
+        self.fig = self.plt.figure(num="Isaac Lab Reward Visualizer", figsize=(14, 8))
+        self.fig.suptitle("Real-time reward terms (mean across environments)")
+        self.fig.show()
+
+    @staticmethod
+    def _short_title(name):
+        """Return a compact subplot title while keeping reward names identifiable."""
+        for prefix in ("Reward/", "Rewards/", "reward/", "rewards/"):
+            if name.startswith(prefix):
+                return name[len(prefix):]
+        return name
+
+    def _rebuild_layout(self):
+        """Rebuild the subplot grid when new reward terms appear."""
+        names = sorted(self.series)
+        if names == self._layout_names:
+            return
+
+        self._layout_names = names
+        self.fig.clear()
+        self.fig.suptitle("Real-time reward terms (mean across environments)")
+        self.axes.clear()
+        self.lines.clear()
+
+        count = len(names)
+        if count == 0:
+            self.fig.canvas.draw_idle()
+            return
+
+        columns = min(self.max_columns, count)
+        rows = (count + columns - 1) // columns
+        self.fig.set_size_inches(max(10.0, 4.5 * columns), max(6.0, 3.0 * rows), forward=True)
+
+        axes = self.fig.subplots(rows, columns, squeeze=False)
+        flat_axes = axes.ravel()
+
+        for index, name in enumerate(names):
+            ax = flat_axes[index]
+            ax.set_title(self._short_title(name), fontsize=9)
+            ax.set_xlabel("Step", fontsize=8)
+            ax.set_ylabel("Reward", fontsize=8)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(axis="both", labelsize=8)
+            self.axes[name] = ax
+            (self.lines[name],) = ax.plot([], [], linewidth=1.2)
+
+        for index in range(count, len(flat_axes)):
+            flat_axes[index].set_visible(False)
+
+        self.fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+
+    def update(self, reward_values):
+        """Append one sample and refresh all reward subplots without blocking Isaac Sim."""
+        if not reward_values:
+            return
+
+        self.step += 1
+        all_names = set(self.series) | set(reward_values)
+
+        for name in sorted(all_names):
+            if name not in self.series:
+                # Backfill newly discovered terms so all plots share the same step index.
+                self.series[name] = [float("nan")] * (self.step - 1)
+            self.series[name].append(reward_values.get(name, float("nan")))
+            if len(self.series[name]) > self.history_length:
+                self.series[name] = self.series[name][-self.history_length :]
+
+        self._rebuild_layout()
+
+        if self.step % self.refresh_interval != 0:
+            return
+
+        for name, values in sorted(self.series.items()):
+            start_step = max(0, self.step - len(values))
+            x_values = list(range(start_step, self.step))
+            self.lines[name].set_data(x_values, values)
+            self.axes[name].relim()
+            self.axes[name].autoscale_view()
+
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        self.plt.pause(0.001)
+
+    def close(self):
+        """Close the Matplotlib window."""
+        if hasattr(self, "fig"):
+            self.plt.close(self.fig)
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
@@ -237,6 +415,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    reward_visualizer = None
+    if args_cli.reward_visualizer:
+        reward_visualizer = RewardVisualizer(history_length=500, refresh_interval=2)
+        print("[INFO] Reward visualizer enabled.")
+
     # reset environment
     obs = env.get_observations()
     timestep = 0
@@ -273,7 +456,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 print(f"[DEBUG] print_first_env_actor_io failed at step {debug_step}: {e}")
 
             # env stepping
-            obs, _, _, _ = env.step(actions)
+            obs, rewards, dones, infos = env.step(actions)
+
+            if reward_visualizer is not None:
+                # Prefer step-returned info. Some DirectRLEnv implementations
+                # expose the same dictionary through ``unwrapped.extras``.
+                reward_values = _collect_reward_scalars(infos)
+                if not reward_values:
+                    reward_values = _collect_reward_scalars(
+                        getattr(env.unwrapped, "extras", None)
+                    )
+
+                # Always include the total per-step reward returned by the wrapper.
+                total_reward = _scalarize_reward_value(rewards)
+                if total_reward is not None:
+                    reward_values["Reward/total_step_reward"] = total_reward
+
+                reward_visualizer.update(reward_values)
 
         debug_step += 1
 
@@ -289,6 +488,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             time.sleep(sleep_time)
 
     # close the simulator
+    if reward_visualizer is not None:
+        reward_visualizer.close()
     env.close()
 
 

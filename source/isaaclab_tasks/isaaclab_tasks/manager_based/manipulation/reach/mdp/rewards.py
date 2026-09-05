@@ -833,3 +833,63 @@ def ee_kp_tracking_sparse_success_plb(
     reward = reward + float(bonus3) * (err < float(th3)).float()
     reward = reward + float(bonus4) * (err < float(th4)).float()
     return reward
+
+
+def ee_kp_tracking_exp_plb(
+    env,
+    command_name: str,
+    asset_cfg,
+    std: float = 0.50,
+    kp_dx: float = 0.30,
+    kp_dz: float = 0.30,
+    ground_z: float = 0.0,
+    w0: float = 1.0,
+    w1: float = 1.0,
+    w2: float = 1.0,
+    std0: float | None = None,
+    std1: float | None = None,
+    std2: float | None = None,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """PLB-frame EE keypoint tracking reward with standard exponential kernel.
+
+    Command format:
+        [kp0(3), kp1(3), kp2(3)] in PLB frame.
+
+    Reward:
+        r_i = exp(-||e_i||^2 / std_i^2)
+        r = weighted_average(r0, r1, r2)
+
+    Args:
+        std: shared std for all keypoints if std0/std1/std2 are not specified.
+        std0/std1/std2: optional per-keypoint std.
+        w0/w1/w2: keypoint weights.
+            kp0 mainly constrains EE position.
+            kp1/kp2 constrain EE orientation through offset keypoints.
+    """
+    e0, e1, e2 = _ee_kp_errors_plb(
+        env=env,
+        command_name=command_name,
+        asset_cfg=asset_cfg,
+        kp_dx=kp_dx,
+        kp_dz=kp_dz,
+        ground_z=ground_z,
+    )
+
+    e0_2 = e0 * e0
+    e1_2 = e1 * e1
+    e2_2 = e2 * e2
+
+    s0 = max(float(std if std0 is None else std0), eps)
+    s1 = max(float(std if std1 is None else std1), eps)
+    s2 = max(float(std if std2 is None else std2), eps)
+
+    r0 = torch.exp(-e0_2 / (s0 * s0))
+    r1 = torch.exp(-e1_2 / (s1 * s1))
+    r2 = torch.exp(-e2_2 / (s2 * s2))
+
+    wsum = float(w0 + w1 + w2)
+    if wsum < eps:
+        return (r0 + r1 + r2) / 3.0
+
+    return (float(w0) * r0 + float(w1) * r1 + float(w2) * r2) / wsum

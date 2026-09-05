@@ -13,6 +13,8 @@ Sampling quotas, collected simultaneously from mixed-posture batches:
 - task ground bucket: 10% of total samples:
     kp0_z in [0.06, 0.15]
     EE local +X pitch in [task_pitch_x_min_deg, task_pitch_x_max_deg]
+    EE local +X yaw in [task_yaw_x_min_deg, task_yaw_x_max_deg]
+    EE roll in [task_roll_min_deg, task_roll_max_deg]
     all samples use maximum squat posture alpha=1.0
 - mid-height bucket: 40% of total samples:
     kp0_z in [0.15, 0.60]
@@ -31,12 +33,13 @@ PLB frame:
 - orientation = yaw-only(base_quat)
 
 Orientation filter:
-- EE roll in PLB frame is constrained to [roll_min_deg, roll_max_deg].
+- Global yaw/pitch/roll filters are kept broad for workspace diversity.
+- The task ground bucket applies stricter pickup-oriented yaw and roll filters.
 
 Usage:
-./isaaclab.sh -p scripts/tools/sample_b2wz1_eepose_plb_keypoints_wholebody.py \
-  --out scripts/tools/reachable_kp0kp1kp2_plb_wholebody_pickup_v2.npy \
-  --num_samples 30000 \
+./isaaclab.sh -p scripts/tools/sample_b2wz1_eepose_plb_keypoints_wholebody_pickup.py \
+  --out scripts/tools/keypoints_plb_pickup.npy \
+  --num_samples 25000 \
   --task_bucket_ratio 0.10 \
   --mid_z_ratio 0.40 \
   --headless
@@ -52,7 +55,7 @@ parser.add_argument("--num_samples", type=int, default=30000)
 parser.add_argument(
     "--out",
     type=str,
-    default="scripts/tools/reachable_kp0kp1kp2_plb_wholebody_v2.npy",
+    default="scripts/tools/keypoints_plb_pickup.npy",
 )
 
 
@@ -74,8 +77,16 @@ parser.add_argument("--task_bucket_ratio", type=float, default=0.10)
 parser.add_argument("--task_z_min", type=float, default=0.06)
 parser.add_argument("--task_z_max", type=float, default=0.15)
 # Applied only to the task bucket. pitch_x is the elevation of EE local +X axis in PLB frame.
-parser.add_argument("--task_pitch_x_min_deg", type=float, default=-60.0)
-parser.add_argument("--task_pitch_x_max_deg", type=float, default=30.0)
+parser.add_argument("--task_pitch_x_min_deg", type=float, default=-75.0)
+parser.add_argument("--task_pitch_x_max_deg", type=float, default=0.0)
+# Applied only to the task bucket. yaw_x is the heading of EE local +X axis in PLB frame.
+# This enforces pickup-oriented local +X forward samples without restricting default workspace diversity.
+parser.add_argument("--task_yaw_x_min_deg", type=float, default=-60.0)
+parser.add_argument("--task_yaw_x_max_deg", type=float, default=60.0)
+# Applied only to the task bucket.  This keeps the pickup bucket near the new
+# joint6=90deg wrist/gripper orientation while leaving global roll broad.
+parser.add_argument("--task_roll_min_deg", type=float, default=30.0)
+parser.add_argument("--task_roll_max_deg", type=float, default=150.0)
 parser.add_argument("--mid_z_ratio", type=float, default=0.40)
 parser.add_argument("--mid_z_min", type=float, default=0.15)
 parser.add_argument("--mid_z_max", type=float, default=0.60)
@@ -108,10 +119,10 @@ parser.add_argument("--max_per_voxel_front", type=int, default=8)
 # orientation constraints
 parser.add_argument("--yaw_min_deg", type=float, default=-90.0)
 parser.add_argument("--yaw_max_deg", type=float, default=90.0)
-parser.add_argument("--pitch_x_min_deg", type=float, default=-90.0)
-parser.add_argument("--pitch_x_max_deg", type=float, default=90.0)
-parser.add_argument("--roll_min_deg", type=float, default=-100.0)
-parser.add_argument("--roll_max_deg", type=float, default=100.0)
+parser.add_argument("--pitch_x_min_deg", type=float, default=-75.0)
+parser.add_argument("--pitch_x_max_deg", type=float, default=30.0)
+parser.add_argument("--roll_min_deg", type=float, default=-150.0)
+parser.add_argument("--roll_max_deg", type=float, default=150.0)
 
 # keypoints
 parser.add_argument("--kp_dx", type=float, default=0.30)
@@ -244,11 +255,15 @@ def _sample_arm_q(robot, arm_joint_names, arm_joint_ids: torch.Tensor):
         high - low
     ).unsqueeze(0)
 
-    q_ref = torch.tensor([0.0, 120.0, -120.0, 0.0, 0.0, 0.0], device=robot.device) * math.pi / 180.0
-    q_low = torch.tensor([0.0, 145.0, -150.0, -30.0, 0.0, 0.0], device=robot.device) * math.pi / 180.0
+    # Bias pickup-oriented arm samples toward a 90deg wrist orientation.
+    # The last entry is joint6; the other arm joints keep the previous reference centers.
+    q_ref = torch.tensor([0.0, 120.0, -120.0, 0.0, 0.0, 90.0], device=robot.device) * math.pi / 180.0
+    q_low = torch.tensor([0.0, 145.0, -150.0, -30.0, 0.0, 90.0], device=robot.device) * math.pi / 180.0
 
-    std_ref = torch.tensor([25.0, 18.0, 18.0, 30.0, 30.0, 35.0], device=robot.device) * math.pi / 180.0
-    std_low = torch.tensor([20.0, 12.0, 12.0, 20.0, 25.0, 30.0], device=robot.device) * math.pi / 180.0
+    # Keep joint6 somewhat concentrated around 90deg, while preserving enough spread
+    # for low-level tracking robustness.
+    std_ref = torch.tensor([25.0, 18.0, 18.0, 30.0, 30.0, 20.0], device=robot.device) * math.pi / 180.0
+    std_low = torch.tensor([20.0, 12.0, 12.0, 20.0, 25.0, 20.0], device=robot.device) * math.pi / 180.0
 
     q_ref_sample = q_ref.unsqueeze(0) + torch.randn((num_envs, num_joints), device=robot.device) * std_ref.unsqueeze(0)
     q_low_sample = q_low.unsqueeze(0) + torch.randn((num_envs, num_joints), device=robot.device) * std_low.unsqueeze(0)
@@ -464,6 +479,8 @@ def main():
         target_task,
         f"z=[{args_cli.task_z_min},{args_cli.task_z_max}], "
         f"pitch_x=[{args_cli.task_pitch_x_min_deg},{args_cli.task_pitch_x_max_deg}], "
+        f"yaw_x=[{args_cli.task_yaw_x_min_deg},{args_cli.task_yaw_x_max_deg}], "
+        f"roll=[{args_cli.task_roll_min_deg},{args_cli.task_roll_max_deg}], "
         "posture=max_squat",
     )
     print(
@@ -595,7 +612,9 @@ def main():
         pos_np = kp0.detach().cpu().numpy().astype(np.float32)
         posture_np = posture_id.detach().cpu().numpy().astype(np.int64)
         alpha_np = alpha.detach().cpu().numpy().astype(np.float32)
+        yaw_x_np = yaw_x.detach().cpu().numpy().astype(np.float32)
         pitch_x_np = pitch_x.detach().cpu().numpy().astype(np.float32)
+        roll_np = roll.detach().cpu().numpy().astype(np.float32)
 
         accepted_task = 0
         accepted_mid = 0
@@ -605,16 +624,24 @@ def main():
             row_kp = keypoints_np[env_i]
             row_pos = pos_np[env_i]
             z = float(row_pos[2])
+            yaw_i = float(yaw_x_np[env_i])
             pitch_i = float(pitch_x_np[env_i])
+            roll_i = float(roll_np[env_i])
             posture = int(posture_np[env_i])
             alpha_i = float(alpha_np[env_i])
 
-            # Task bucket: max-squat posture only, ground-level height, pickup-oriented pitch.
+            # Task bucket: strict pickup-oriented samples.
+            # Require max-squat, low height, local +X roughly forward, and
+            # wrist/EE roll near the new joint6=90deg grasp orientation.
             in_task_bucket = (
                 z >= float(args_cli.task_z_min)
                 and z <= float(args_cli.task_z_max)
                 and pitch_i >= float(args_cli.task_pitch_x_min_deg)
                 and pitch_i <= float(args_cli.task_pitch_x_max_deg)
+                and yaw_i >= float(args_cli.task_yaw_x_min_deg)
+                and yaw_i <= float(args_cli.task_yaw_x_max_deg)
+                and roll_i >= float(args_cli.task_roll_min_deg)
+                and roll_i <= float(args_cli.task_roll_max_deg)
                 and posture == 1
                 and alpha_i >= 0.999
             )
@@ -772,6 +799,45 @@ def main():
           float(mid_final[:, 2].min()) if mid_final.shape[0] > 0 else float("nan"),
           float(mid_final[:, 2].max()) if mid_final.shape[0] > 0 else float("nan"),
           float(mid_final[:, 2].mean()) if mid_final.shape[0] > 0 else float("nan"))
+
+    # Recover saved keypoint orientation statistics from kp0/kp1/kp2.
+    # kp1-kp0 is local +X * kp_dx, kp2-kp0 is local +Z * kp_dz in PLB.
+    x_axis = out[:, 3:6] - out[:, 0:3]
+    z_axis = out[:, 6:9] - out[:, 0:3]
+    x_axis = x_axis / np.maximum(np.linalg.norm(x_axis, axis=1, keepdims=True), 1.0e-9)
+    z_axis = z_axis / np.maximum(np.linalg.norm(z_axis, axis=1, keepdims=True), 1.0e-9)
+    saved_yaw_x = np.degrees(np.arctan2(x_axis[:, 1], x_axis[:, 0]))
+    saved_pitch_x = np.degrees(
+        np.arctan2(x_axis[:, 2], np.sqrt(x_axis[:, 0] ** 2 + x_axis[:, 1] ** 2) + 1.0e-9)
+    )
+    saved_z_vertical_abs = np.abs(z_axis[:, 2])
+
+    task_mask = workspace_id == 3
+    mid_mask = workspace_id == 2
+    default_mask = workspace_id == 1
+
+    def _print_axis_stats(name, mask):
+        if not np.any(mask):
+            print(f"[STATS] {name} orientation: empty")
+            return
+        print(
+            f"[STATS] {name} yaw_x min/max/mean: "
+            f"{float(saved_yaw_x[mask].min())} {float(saved_yaw_x[mask].max())} {float(saved_yaw_x[mask].mean())}"
+        )
+        print(
+            f"[STATS] {name} pitch_x min/max/mean: "
+            f"{float(saved_pitch_x[mask].min())} {float(saved_pitch_x[mask].max())} {float(saved_pitch_x[mask].mean())}"
+        )
+        print(
+            f"[STATS] {name} |local_z_vertical| min/max/mean: "
+            f"{float(saved_z_vertical_abs[mask].min())} {float(saved_z_vertical_abs[mask].max())} {float(saved_z_vertical_abs[mask].mean())}"
+        )
+
+    _print_axis_stats("all", np.ones_like(workspace_id, dtype=bool))
+    _print_axis_stats("task", task_mask)
+    _print_axis_stats("mid", mid_mask)
+    _print_axis_stats("default", default_mask)
+
     print("[CHECK] mean ||kp1-kp0||:", float(np.mean(np.linalg.norm(out[:, 3:6] - out[:, 0:3], axis=1))))
     print("[CHECK] mean ||kp2-kp0||:", float(np.mean(np.linalg.norm(out[:, 6:9] - out[:, 0:3], axis=1))))
 

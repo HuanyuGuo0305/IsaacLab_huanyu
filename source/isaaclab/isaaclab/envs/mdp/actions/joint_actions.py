@@ -313,6 +313,178 @@ class DelayedJointPositionAction(JointAction):
         )
 
 
+class RateLimitedDelayedJointPositionAction(DelayedJointPositionAction):
+    """Joint position action with target rate limit and per-environment delay.
+
+    Pipeline:
+        raw_action
+        -> processed_action = raw_action * scale + offset
+        -> rate-limited processed_action
+        -> FIFO delay buffer
+        -> set_joint_position_target(delayed_limited_action)
+
+    The rate limit is applied to the final joint position target, not to raw action.
+    """
+
+    cfg: actions_cfg.RateLimitedDelayedJointPositionActionCfg
+
+    def __init__(
+        self,
+        cfg: actions_cfg.RateLimitedDelayedJointPositionActionCfg,
+        env: ManagerBasedEnv,
+    ):
+        super().__init__(cfg, env)
+
+        # Build per-env, per-joint rate limit tensor: [num_envs, action_dim]
+        rate = cfg.target_rate_limit
+
+        if isinstance(rate, (float, int)):
+            self._target_rate_limit = torch.full(
+                (self.num_envs, self.action_dim),
+                float(rate),
+                device=self.device,
+                dtype=torch.float32,
+            )
+        else:
+            rate_tensor = torch.tensor(
+                rate,
+                device=self.device,
+                dtype=torch.float32,
+            )
+
+            if rate_tensor.numel() != self.action_dim:
+                raise ValueError(
+                    "[RateLimitedDelayedJointPositionAction] "
+                    f"target_rate_limit length must match action_dim={self.action_dim}, "
+                    f"got {rate_tensor.numel()}."
+                )
+
+            self._target_rate_limit = rate_tensor.unsqueeze(0).repeat(self.num_envs, 1)
+
+        if torch.any(self._target_rate_limit <= 0.0):
+            raise ValueError(
+                "[RateLimitedDelayedJointPositionAction] "
+                f"target_rate_limit must be positive, got {cfg.target_rate_limit}."
+            )
+
+        # Previous limited target: [num_envs, action_dim]
+        self._prev_limited_actions = torch.zeros(
+            self.num_envs,
+            self.action_dim,
+            device=self.device,
+            dtype=torch.float32,
+        )
+
+        # Initialize previous limited target and delay history.
+        self._reset_rate_limiter(None)
+
+    def _get_default_offset_command(self, env_ids_t: torch.Tensor) -> torch.Tensor:
+        """Return default offset command for selected envs."""
+        if isinstance(self._offset, torch.Tensor):
+            return self._offset[env_ids_t]
+        else:
+            return torch.zeros(
+                (env_ids_t.numel(), self.action_dim),
+                device=self.device,
+                dtype=torch.float32,
+            ) + float(self._offset)
+
+    def _reset_rate_limiter(self, env_ids: Sequence[int] | None):
+        """Reset previous limited target and delay history for selected envs."""
+        if env_ids is None:
+            env_ids_t = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        else:
+            if isinstance(env_ids, torch.Tensor):
+                env_ids_t = env_ids.to(device=self.device, dtype=torch.long)
+            else:
+                env_ids_t = torch.tensor(env_ids, device=self.device, dtype=torch.long)
+
+        if env_ids_t.numel() == 0:
+            return
+
+        if self.cfg.reset_to_current_joint_pos:
+            init_cmd = self._asset.data.joint_pos[env_ids_t][:, self._joint_ids].clone()
+        else:
+            init_cmd = self._get_default_offset_command(env_ids_t).clone()
+
+        self._prev_limited_actions[env_ids_t] = init_cmd
+
+        # Important:
+        # Fill the delay FIFO with the same initialized target.
+        # Otherwise, the first delayed command after reset may come from zeros.
+        self._action_history[:, env_ids_t, :] = init_cmd.unsqueeze(0).expand(
+            self._history_len,
+            env_ids_t.numel(),
+            self.action_dim,
+        )
+
+    def _get_control_dt(self) -> float:
+        """Return action/control dt used for target rate limit."""
+        if hasattr(self._env, "step_dt"):
+            return float(self._env.step_dt)
+
+        # Fallback for older/custom envs.
+        if hasattr(self._env, "physics_dt") and hasattr(self._env, "cfg"):
+            decimation = getattr(self._env.cfg, "decimation", 1)
+            return float(self._env.physics_dt) * float(decimation)
+
+        raise RuntimeError(
+            "[RateLimitedDelayedJointPositionAction] "
+            "Cannot infer control dt. Expected env.step_dt or env.physics_dt/env.cfg.decimation."
+        )
+
+    def process_actions(self, actions: torch.Tensor):
+        # First run normal JointAction processing:
+        # self._processed_actions = raw_action * scale + offset
+        super(DelayedJointPositionAction, self).process_actions(actions)
+
+        raw_target = self._processed_actions
+
+        dt = self._get_control_dt()
+        max_delta = self._target_rate_limit * dt
+
+        delta = raw_target - self._prev_limited_actions
+        delta_limited = torch.clamp(delta, min=-max_delta, max=max_delta)
+
+        limited_target = self._prev_limited_actions + delta_limited
+
+        self._processed_actions[:] = limited_target
+        self._prev_limited_actions[:] = limited_target.detach()
+
+        # FIFO update with the rate-limited target.
+        if self._history_len > 1:
+            self._action_history[1:] = self._action_history[:-1].clone()
+        self._action_history[0] = self._processed_actions
+
+    def apply_actions(self):
+        # Same as DelayedJointPositionAction.
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        delayed_actions = self._action_history[self._delay_steps, env_ids]
+
+        self._asset.set_joint_position_target(delayed_actions, joint_ids=self._joint_ids)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        # Run parent reset first so raw action buffers are reset consistently.
+        JointAction.reset(self, env_ids)
+
+        if env_ids is None:
+            env_ids_t = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        else:
+            if isinstance(env_ids, torch.Tensor):
+                env_ids_t = env_ids.to(device=self.device, dtype=torch.long)
+            else:
+                env_ids_t = torch.tensor(env_ids, device=self.device, dtype=torch.long)
+
+        if env_ids_t.numel() == 0:
+            return
+
+        # Resample delay exactly like DelayedJointPositionAction.
+        self._resample_delays(env_ids_t)
+
+        # Reset rate limiter state and FIFO history.
+        self._reset_rate_limiter(env_ids_t)
+
+
 class RelativeJointPositionAction(JointAction):
     r"""Joint action term that applies the processed actions to the articulation's joints as relative position commands.
 

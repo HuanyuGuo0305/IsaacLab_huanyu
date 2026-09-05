@@ -21,7 +21,7 @@ import isaaclab_tasks.manager_based.manipulation.reach.mdp as manipulation_mdp
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipObservationCfg:
+class UnitreeB2WZ1PLBTrajLocoManipObservationCfg:
     """Observation specifications for the MDP."""
 
     @configclass
@@ -130,7 +130,7 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipObservationCfg:
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipActionCfg():
+class UnitreeB2WZ1PLBTrajLocoManipActionCfg():
     """Action specifications for the MDP."""
     
     leg_joint_pos = mdp.JointPositionActionCfg(
@@ -149,17 +149,6 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipActionCfg():
         max_delay=2,
     )
 
-    # arm_joint_pos = mdp.RateLimitedDelayedJointPositionActionCfg(
-    #     asset_name="robot",
-    #     joint_names=[".*"],
-    #     scale=0.10,
-    #     use_default_offset=True,
-    #     min_delay=0,
-    #     max_delay=2,
-    #     target_rate_limit=(0.3, 0.2, 0.2, 0.3, 0.3, 0.3),  
-    #     reset_to_current_joint_pos=True,
-    # )
-
     joint_vel = mdp.JointVelocityActionCfg(
         asset_name="robot", 
         joint_names=[".*"], 
@@ -169,7 +158,7 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipActionCfg():
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipCommandsCfg():
+class UnitreeB2WZ1PLBTrajLocoManipCommandsCfg():
     """Command spcifications for the MDP."""
 
     base_velocity = mdp.UniformVelocityCommandCfg(
@@ -189,7 +178,7 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipCommandsCfg():
     )
 
     # keypoints command (kp0,kp1,kp2) in PLB, shape (N,9)
-    ee_kp = mdp.PresampledKeypointsDirectCommandPLBCfg(
+    ee_kp = mdp.PresampledKeypointsCubicTrajectoryCommandPLBCfg(
         asset_name="robot",
         body_name="gripperStator",
         resampling_time_range=(8.0, 8.0),
@@ -199,11 +188,24 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipCommandsCfg():
         kp_dx=0.30,
         kp_dz=0.30,
         ground_z=0.0,
+
+        cycle_duration_s=8.0,
+        max_lin_vel=0.12,
+        traj_duration_min_s=1.0,
+        traj_duration_max_s=7.0,
+
+        base_box_min=(-0.35, -0.25, 0.00),
+        base_box_max=(0.35, 0.25, 0.55),
+        base_box_margin=0.08,
+        collision_check_samples=20,
+        resample_attempts=50,
+        collision_check_all_keypoints=True,
+        reject_too_far_for_speed=True,
     )
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipEventCfg(EventCfg):
+class UnitreeB2WZ1PLBTrajLocoManipEventCfg(EventCfg):
 
     # reset events
     randomize_actuator_gains_base = EventTerm(
@@ -230,23 +232,67 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipEventCfg(EventCfg):
         },
     )
 
-    joint_armature_arm= EventTerm(
+    joint_armature_joint1 = EventTerm(
         func=mdp.randomize_joint_parameters,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "armature_distribution_params": (0.7, 1.3),
-            "operation": "scale",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint1"]),
+            "armature_distribution_params": (0.02, 0.08),
+            "operation": "add",
             "distribution": "uniform",
         },
     )
 
-    joint_friction_arm = EventTerm(
+    joint_armature_lift = EventTerm(
         func=mdp.randomize_joint_parameters,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
-            "friction_distribution_params": (-0.01, 0.01),
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint2", "joint3"]),
+            "armature_distribution_params": (0.01, 0.05),
+            "operation": "add",
+            "distribution": "uniform",
+        },
+    )
+
+    joint_armature_wrist = EventTerm(
+        func=mdp.randomize_joint_parameters,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint4", "joint5", "joint6"]),
+            "armature_distribution_params": (0.0, 0.02),
+            "operation": "add",
+            "distribution": "uniform",
+        },
+    )
+
+    joint_friction_joint1 = EventTerm(
+        func=mdp.randomize_joint_parameters,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint1"]),
+            "friction_distribution_params": (0.01, 0.05),
+            "operation": "add",
+            "distribution": "uniform",
+        },
+    )
+
+    joint_friction_lift = EventTerm(
+        func=mdp.randomize_joint_parameters,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint2", "joint3"]),
+            "friction_distribution_params": (0.005, 0.03),
+            "operation": "add",
+            "distribution": "uniform",
+        },
+    )
+
+    joint_friction_wrist = EventTerm(
+        func=mdp.randomize_joint_parameters,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["joint4", "joint5", "joint6"]),
+            "friction_distribution_params": (0.0, 0.02),
             "operation": "add",
             "distribution": "uniform",
         },
@@ -321,19 +367,35 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipEventCfg(EventCfg):
         interval_range_s=(10.0, 15.0),
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
-            "force_range": (-1.0, 1.0),
+            "force_range": (-2.0, 2.0),
             "torque_range": (-0.0, 0.0),
         },
     )
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipRewardsCfg(RewardsCfg):
+class UnitreeB2WZ1PLBTrajLocoManipRewardsCfg(RewardsCfg):
     """Reward specifications for the MDP."""
 
     # -- arm task rewards --
     ee_kp_tracking_exp_coarse = RewTerm(
-        func=manipulation_mdp.ee_kp_tracking_exp_saturated_std_schedule_plb,
+        func=manipulation_mdp.ee_kp_tracking_exp_plb,
+        weight=1.5,
+        params={
+            "command_name": "ee_kp",
+            "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
+            "kp_dx": 0.30,
+            "kp_dz": 0.30,
+            "ground_z": 0.0,
+            "w0": 1.0,
+            "w1": 1.0,
+            "w2": 1.0,
+            "std": 0.50,
+        },
+    )
+
+    ee_kp_tracking_exp_fine = RewTerm(
+        func=manipulation_mdp.ee_kp_tracking_exp_plb,
         weight=2.0,
         params={
             "command_name": "ee_kp",
@@ -344,60 +406,33 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipRewardsCfg(RewardsCfg):
             "w0": 1.0,
             "w1": 1.0,
             "w2": 1.0,
-            "std_start": 1.0,
-            "std_end": 0.50,
-            "threshold": 0.0,
-            "gate_start_ratio": 0.0,
-            "gate_end_ratio": 0.50,
-            "gate_kind": "smootherstep",
-        },
-    )
-
-    ee_kp_tracking_exp_finetune_delayed = RewTerm(
-        func=manipulation_mdp.ee_kp_tracking_delayed_exp_plb,
-        weight=3.0,
-        params={
-            "command_name": "ee_kp",
-            "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
-            "kp_dx": 0.30,
-            "kp_dz": 0.30,
-            "ground_z": 0.0,
-            "w0": 1.0,
-            "w1": 1.0,
-            "w2": 1.0,
             "std": 0.15,
-            "std0": 0.15,
-            "std1": 0.15,
-            "std2": 0.15,
-            "gate_start_ratio": 0.50,
-            "gate_end_ratio": 0.75,
-            "gate_kind": "smootherstep",
         },
     )
 
-    ee_kp_sparse_success = RewTerm(
-        func=manipulation_mdp.ee_kp_tracking_sparse_success_plb,
-        weight=1.0,
-        params={
-            "command_name": "ee_kp",
-            "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
-            "kp_dx": 0.30,
-            "kp_dz": 0.30,
-            "ground_z": 0.0,
-            "w0": 1.0,
-            "w1": 1.0,
-            "w2": 1.0,
-            "th1": 0.09,
-            "th2": 0.07,
-            "th3": 0.05,
-            "th4": 0.03,
-            "bonus1": 0.2,
-            "bonus2": 0.2,
-            "bonus3": 0.2,
-            "bonus4": 0.2,
-            "metric": "weighted_mean",
-        },
-    )
+    # ee_kp_sparse_success = RewTerm(
+    #     func=manipulation_mdp.ee_kp_tracking_sparse_success_plb,
+    #     weight=1.0,
+    #     params={
+    #         "command_name": "ee_kp",
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="gripperStator"),
+    #         "kp_dx": 0.30,
+    #         "kp_dz": 0.30,
+    #         "ground_z": 0.0,
+    #         "w0": 1.0,
+    #         "w1": 1.0,
+    #         "w2": 1.0,
+    #         "th1": 0.09,
+    #         "th2": 0.07,
+    #         "th3": 0.05,
+    #         "th4": 0.03,
+    #         "bonus1": 0.2,
+    #         "bonus2": 0.2,
+    #         "bonus3": 0.2,
+    #         "bonus4": 0.2,
+    #         "metric": "weighted_mean",
+    #     },
+    # )
 
     # -- root penalties
     body_lin_acc_l2 = RewTerm(
@@ -538,7 +573,7 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipRewardsCfg(RewardsCfg):
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipTerminationCfg():
+class UnitreeB2WZ1PLBTrajLocoManipTerminationCfg():
     """Termination specifications for the MDP."""
     
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
@@ -565,7 +600,7 @@ def ramp_value(env, env_ids, data, start, end, start_step, end_step):
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipCurriculumCfg():
+class UnitreeB2WZ1PLBTrajLocoManipCurriculumCfg():
     """Curriculum specifications for the MDP."""
 
     ee_lin_vel_weight_200 = CurrTerm(
@@ -618,7 +653,7 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipCurriculumCfg():
         params={
             "address": "rewards.action_rate_arm_l2.weight",
             "modify_fn": ramp_value,
-            "modify_params": {"start": -0.05, "end": -0.15, "start_step": 4800, "end_step": 12000},
+            "modify_params": {"start": -0.05, "end": -0.20, "start_step": 4800, "end_step": 12000},
         },
     )
 
@@ -660,18 +695,18 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipCurriculumCfg():
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
+class UnitreeB2WZ1PLBTrajLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
     """Configuration for Unitree B2WZ1 loco-manipulation tracking environment."""
 
     # Basic settings
-    observations: UnitreeB2WZ1PLBWholeBodyLocoManipObservationCfg = UnitreeB2WZ1PLBWholeBodyLocoManipObservationCfg()
-    actions: UnitreeB2WZ1PLBWholeBodyLocoManipActionCfg = UnitreeB2WZ1PLBWholeBodyLocoManipActionCfg()
-    commands: UnitreeB2WZ1PLBWholeBodyLocoManipCommandsCfg = UnitreeB2WZ1PLBWholeBodyLocoManipCommandsCfg()
+    observations: UnitreeB2WZ1PLBTrajLocoManipObservationCfg = UnitreeB2WZ1PLBTrajLocoManipObservationCfg()
+    actions: UnitreeB2WZ1PLBTrajLocoManipActionCfg = UnitreeB2WZ1PLBTrajLocoManipActionCfg()
+    commands: UnitreeB2WZ1PLBTrajLocoManipCommandsCfg = UnitreeB2WZ1PLBTrajLocoManipCommandsCfg()
     # MDP settings
-    events: UnitreeB2WZ1PLBWholeBodyLocoManipEventCfg = UnitreeB2WZ1PLBWholeBodyLocoManipEventCfg()
-    rewards: UnitreeB2WZ1PLBWholeBodyLocoManipRewardsCfg = UnitreeB2WZ1PLBWholeBodyLocoManipRewardsCfg()
-    terminations: UnitreeB2WZ1PLBWholeBodyLocoManipTerminationCfg = UnitreeB2WZ1PLBWholeBodyLocoManipTerminationCfg()
-    curriculum: UnitreeB2WZ1PLBWholeBodyLocoManipCurriculumCfg = UnitreeB2WZ1PLBWholeBodyLocoManipCurriculumCfg()
+    events: UnitreeB2WZ1PLBTrajLocoManipEventCfg = UnitreeB2WZ1PLBTrajLocoManipEventCfg()
+    rewards: UnitreeB2WZ1PLBTrajLocoManipRewardsCfg = UnitreeB2WZ1PLBTrajLocoManipRewardsCfg()
+    terminations: UnitreeB2WZ1PLBTrajLocoManipTerminationCfg = UnitreeB2WZ1PLBTrajLocoManipTerminationCfg()
+    curriculum: UnitreeB2WZ1PLBTrajLocoManipCurriculumCfg = UnitreeB2WZ1PLBTrajLocoManipCurriculumCfg()
 
 
     # viewer
@@ -726,10 +761,9 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
         # --- termination settings ---
 
         # --- event settings ---
-        self.events.physics_material.params["static_friction_range"] = (0.4, 1.2)
-        self.events.physics_material.params["dynamic_friction_range"] = (0.4, 1.2)
-        self.events.physics_material.params["restitution_range"] = (0.0, 0.1)
-        self.events.physics_material.params["make_consistent"] = True
+        self.events.physics_material.params["static_friction_range"] = (0.4, 2.0)
+        self.events.physics_material.params["dynamic_friction_range"] = (0.4, 2.0)
+        self.events.physics_material.params["restitution_range"] = (0.0, 0.2)
         self.events.add_base_mass.params["asset_cfg"].body_names = "base_link"
         self.events.add_base_mass.params["mass_distribution_params"] = (-2.0, 2.0)
         self.events.base_com.params["asset_cfg"].body_names = "base_link"
@@ -774,8 +808,6 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.events.reset_robot_joints.params["velocity_range"] = (0.0, 0.0)
         self.events.randomize_actuator_gains_base.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=self.leg_joint_names+self.wheel_joint_names)
         self.events.randomize_actuator_gains_arm.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=self.arm_joint_names)
-        self.events.joint_armature_arm.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=self.arm_joint_names)
-        self.events.joint_friction_arm.params["asset_cfg"] = SceneEntityCfg("robot", joint_names=self.arm_joint_names)
 
         # --- reward settings ---
         # task rewards
@@ -823,7 +855,7 @@ class UnitreeB2WZ1PLBWholeBodyLocoManipEnvCfg(LocomotionVelocityRoughEnvCfg):
 
 
 @configclass
-class UnitreeB2WZ1PLBWholeBodyLocoManipEnvCfg_PLAY(UnitreeB2WZ1PLBWholeBodyLocoManipEnvCfg):
+class UnitreeB2WZ1PLBTrajLocoManipEnvCfg_PLAY(UnitreeB2WZ1PLBTrajLocoManipEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()

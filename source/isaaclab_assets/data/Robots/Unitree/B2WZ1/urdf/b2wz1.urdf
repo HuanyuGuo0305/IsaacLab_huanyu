@@ -810,46 +810,178 @@
   </joint>
   <link name="gripperStator">
     <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../meshes/arm_meshes/meshes/visual/z1_GripperStator.dae" scale="1 1 1"/>
+        <mesh filename="../meshes/arm_meshes/meshes/visual/z1_GripperStator.dae"
+              scale="1 1 1"/>
       </geometry>
     </visual>
-    <collision>
+
+    <!-- Official stator collision meshes.
+        gripperStator link itself is already located at x=0.051 relative to link06. -->
+    <collision name="gripper_stator_col_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-          <cylinder length="0.051" radius="0.0325"/>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperStator_col_1.stl"
+              scale="1 1 1"/>
       </geometry>
-      <origin rpy="0 0 0" xyz="0 0 0"/>
     </collision>
+
+    <collision name="gripper_stator_col_2">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperStator_col_2.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_stator_col_3">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperStator_col_3.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_stator_col_4">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperStator_col_4.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_stator_col_5">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperStator_col_5.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_stator_col_6">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperStator_col_6.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <!-- Official fixed-finger pad collisions.
+        MuJoCo box size is half extent; URDF box size is full length.
+        MJCF position x=0.186 is relative to link06.
+        Local stator position is 0.186 - 0.051 = 0.135. -->
+    <collision name="gripper_stator_pad_collision_1">
+      <origin xyz="0.135 -0.015 -0.0125" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.028 0.030 0.008"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_stator_pad_collision_2">
+      <origin xyz="0.135 0.015 -0.0125" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.028 0.030 0.008"/>
+      </geometry>
+    </collision>
+
     <inertial>
       <origin rpy="0 0 0" xyz="0.04764427 -0.00035819 -0.00249162"/>
       <mass value="0.52603655"/>
-      <inertia ixx="0.00038683" ixy="-3.59e-06" ixz="7.662e-05" iyy="0.00068614" iyz="2.09e-06" izz="0.00066293"/>
+      <inertia ixx="0.00038683"
+              ixy="-3.59e-06"
+              ixz="7.662e-05"
+              iyy="0.00068614"
+              iyz="2.09e-06"
+              izz="0.00066293"/>
     </inertial>
   </link>
-  <joint name="jointGripper" type="revolute">
+    <joint name="jointGripper" type="revolute">
     <origin rpy="0 0 0" xyz="0.049 0.0 0"/>
     <parent link="gripperStator"/>
     <child link="gripperMover"/>
     <axis xyz="0 1 0"/>
     <dynamics damping="1.0" friction="1.0"/>
-    <limit effort="30.0" lower="-1.5707963267948966" upper="0.0" velocity="3.1415"/>
+    <limit effort="30.0"
+          lower="-1.57079632679"
+          upper="0.0"
+          velocity="3.1415"/>
   </joint>
   <link name="gripperMover">
     <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../meshes/arm_meshes/meshes/visual/z1_GripperMover.dae" scale="1 1 1"/>
+        <mesh filename="../meshes/arm_meshes/meshes/visual/z1_GripperMover.dae"
+              scale="1 1 1"/>
       </geometry>
     </visual>
-    <collision>
+
+    <!-- Official mover collision meshes. -->
+    <collision name="gripper_mover_col_1">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-          <cylinder length="0.051" radius="0.0325"/>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperMover_col_1.stl"
+              scale="1 1 1"/>
       </geometry>
-      <origin rpy="0 0 0" xyz="0 0 0"/>
     </collision>
+
+    <collision name="gripper_mover_col_2">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperMover_col_2.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_mover_col_3">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperMover_col_3.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_mover_col_4">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperMover_col_4.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_mover_col_5">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/arm_meshes/meshes/collision/z1_GripperMover_col_5.stl"
+              scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <!-- Official moving-finger pad collisions.
+        Positions are already relative to gripperMover. -->
+    <collision name="gripper_mover_pad_collision_1">
+      <origin xyz="0.086 -0.015 -0.0055" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.028 0.030 0.008"/>
+      </geometry>
+    </collision>
+
+    <collision name="gripper_mover_pad_collision_2">
+      <origin xyz="0.086 0.015 -0.0055" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.028 0.030 0.008"/>
+      </geometry>
+    </collision>
+
     <inertial>
       <origin rpy="0 0 0" xyz="0.01320633 0.00476708 0.00380534"/>
       <mass value="0.27621302"/>
-      <inertia ixx="0.00017716" ixy="1.683e-05" ixz="-1.786e-05" iyy="0.00026787" iyz="2.62e-06" izz="0.00035728"/>
+      <inertia ixx="0.00017716"
+              ixy="1.683e-05"
+              ixz="-1.786e-05"
+              iyy="0.00026787"
+              iyz="2.62e-06"
+              izz="0.00035728"/>
     </inertial>
   </link>
   <joint name="gripperCenter" type="fixed">
