@@ -898,3 +898,112 @@ UNITREE_B2WZ1_CFG = ArticulationCfg(
         ),
     },
 )
+
+##
+# Configuration - Unitree Z1, standalone, for Unsupervised Actuator Net (UAN).
+##
+
+# Nominal actuator spec the UAN corrects. The network learns a residual
+# torque on top of THIS law, so it defines what has to be corrected and must
+# be the same law the downstream WBC trains against.
+#
+# The hardware data these gains are paired with was collected with the arm
+# bench-mounted, base level and world-aligned, gripper empty -- hence a
+# fixed-base, gripper-less articulation. z1.urdf already carries a `world`
+# link and a fixed `base_static_joint`, and has no gripper.
+#
+# NOTE ON UNITS: these are simulator gains in N*m/rad, NOT the Z1 firmware
+# kp/kd recorded in the logs. Measured real stiffness under firmware
+# kp=[2.5, 4.5, 2.5, 2.5, 2.5, 2.5] came to
+# [40.8, 100.4, 51.8, 46.9, 38.7, 31.4] N*m/rad (12.6-22.3x the firmware
+# number). The two need not match: the UAN residual absorbs the difference,
+# which is exactly what the paper does when it replays hardware q_des
+# through sim gains of 64/128 and discards the logged firmware gains.
+UNITREE_Z1_UAN_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/Unitree/Z1/usd/z1.usd",
+        activate_contact_sensors=False,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=False,
+            fix_root_link=True,
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=0,
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.0),
+        # The collection home pose. Every reset overwrites this from the
+        # dataset, so it only matters for the very first frame.
+        joint_pos={
+            "joint1": 0.0,
+            "joint2": 1.5,
+            "joint3": -1.5,
+            "joint4": -0.2,
+            "joint5": 0.0,
+            "joint6": 0.0,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=1.0,
+    actuators={
+        "z1_uan_joint1": DCMotorCfg(
+            joint_names_expr=["joint1"],
+            effort_limit=30.0,
+            saturation_effort=30.0,
+            velocity_limit=3.1415,
+            stiffness=64.0,
+            damping=3.0,
+            friction=0.01,
+            armature=0.02,
+        ),
+        "z1_uan_joint2": DCMotorCfg(
+            joint_names_expr=["joint2"],
+            effort_limit=60.0,
+            saturation_effort=60.0,
+            velocity_limit=3.1415,
+            stiffness=115.2,
+            damping=4.0,
+            friction=0.01,
+            armature=0.02,
+        ),
+        "z1_uan_jointrest": DCMotorCfg(
+            joint_names_expr=["joint3", "joint4", "joint5", "joint6"],
+            effort_limit=30.0,
+            saturation_effort=30.0,
+            velocity_limit=3.1415,
+            stiffness=64.0,
+            damping=3.0,
+            friction=0.01,
+            armature=0.02,
+        ),
+    },
+)
+"""Unitree Z1, fixed base, 6 DOF, no gripper -- the UAN training asset.
+
+Actuator gains are the UAN nominal law:
+    stiffness [64.0, 115.2, 64.0, 64.0, 64.0, 64.0] N*m/rad
+    damping   [ 3.0,   4.0,  3.0,  3.0,  3.0,  3.0] N*m*s/rad
+    effort    [30.0,  60.0, 30.0, 30.0, 30.0, 30.0] N*m
+
+``velocity_limit`` is the DC-motor torque-speed knee, set to the Z1's own
+rated speed of pi rad/s (``Z1Model.getJointSpeedMax``). The B2WZ1 configs use
+2.0 here, which the hardware contradicts: the real arm was measured producing
+30+ N*m at 3.9 rad/s, where a 2.0 rad/s knee permits no positive torque at
+all. Left at 2.0 the UAN would spend its capacity undoing that artefact
+instead of modelling the actuator.
+
+The UAN environment does NOT let PhysX run this PD law. It reads the gains
+and limits from here, drives the articulation in pure effort mode, and
+applies the law itself, so that the residual can be added AFTER the
+torque-speed clip -- the order used in the paper, and the only order in which
+the residual can lift the joint past the nominal envelope.
+"""
